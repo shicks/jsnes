@@ -1,10 +1,10 @@
-var CPU = require("./cpu");
-var Controller = require("./controller");
-var PPU = require("./ppu");
-var PAPU = require("./papu");
-var ROM = require("./rom");
+import {CPU} from './cpu.js';
+import {Controller} from './controller.js';
+import {PPU} from './ppu.js';
+import {PAPU} from './papu.js';
+import {ROM} from './rom.js';
 
-var NES = function(opts) {
+export function NES(opts) {
   this.opts = {
     onFrame: function() {},
     onAudioSample: null,
@@ -49,7 +49,7 @@ var NES = function(opts) {
   this.zapperMove = this.zapperMove.bind(this);
   this.zapperFireDown = this.zapperFireDown.bind(this);
   this.zapperFireUp = this.zapperFireUp.bind(this);
-};
+}
 
 NES.prototype = {
   fpsFrameCount: 0,
@@ -206,5 +206,3 @@ NES.prototype = {
     this.ppu.fromJSON(s.ppu);
   }
 };
-
-module.exports = NES;

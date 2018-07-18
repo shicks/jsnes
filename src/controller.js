@@ -1,9 +1,9 @@
-var Controller = function() {
+export function Controller() {
   this.state = new Array(8);
   for (var i = 0; i < this.state.length; i++) {
     this.state[i] = 0x40;
   }
-};
+}
 
 Controller.BUTTON_A = 0;
 Controller.BUTTON_B = 1;
@@ -23,5 +23,3 @@ Controller.prototype = {
     this.state[key] = 0x40;
   }
 };
-
-module.exports = Controller;

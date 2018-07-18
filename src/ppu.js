@@ -1,7 +1,7 @@
-var Tile = require("./tile");
-var utils = require("./utils");
+import {Tile} from './tile.js';
+import * as utils from './utils.js';
 
-var PPU = function(nes) {
+export function PPU(nes) {
   this.nes = nes;
 
   // Keep Chrome happy
@@ -1749,5 +1749,3 @@ PaletteTable.prototype = {
     this.setEmphasis(0);
   }
 };
-
-module.exports = PPU;

@@ -1,6 +1,6 @@
-var utils = require("./utils");
+import * as utils from './utils.js';
 
-var CPU = function(nes) {
+export function CPU(nes) {
   this.nes = nes;
 
   // Keep Chrome happy
@@ -1656,5 +1656,3 @@ OpData.prototype = {
       ((cycles & 0xff) << 24);
   }
 };
-
-module.exports = CPU;

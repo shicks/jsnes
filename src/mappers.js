@@ -1,6 +1,6 @@
-var utils = require("./utils");
+import * as utils from './utils.js';
 
-var Mappers = {};
+export const Mappers = {};
 
 Mappers[0] = function(nes) {
   this.nes = nes;
@@ -1380,5 +1380,3 @@ Mappers[66].prototype.write = function(address, value) {
     this.load8kVromBank((value & 3) * 2, 0x0000);
   }
 };
-
-module.exports = Mappers;

@@ -1,7 +1,7 @@
-var Mappers = require("./mappers");
-var Tile = require("./tile");
+import {Mappers} from './mappers.js';
+import {Tile} from './tile.js';
 
-var ROM = function(nes) {
+export function ROM(nes) {
   this.nes = nes;
 
   this.mapperName = new Array(92);
@@ -46,7 +46,7 @@ var ROM = function(nes) {
   this.mapperName[71] = "Camerica chip";
   this.mapperName[78] = "Irem 74HC161/32-based";
   this.mapperName[91] = "Pirate HK-SF3 chip";
-};
+}
 
 ROM.prototype = {
   // Mirroring types:
@@ -200,5 +200,3 @@ ROM.prototype = {
     }
   }
 };
-
-module.exports = ROM;

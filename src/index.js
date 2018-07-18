@@ -1,4 +1,2 @@
-module.exports = {
-  Controller: require("./controller"),
-  NES: require("./nes")
-};
+export {Controller} from './controller.js';
+export {NES} from './nes.js';

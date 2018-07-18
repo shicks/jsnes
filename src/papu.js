@@ -1,7 +1,7 @@
 var CPU_FREQ_NTSC = 1789772.5; //1789772.72727272d;
 // var CPU_FREQ_PAL = 1773447.4;
 
-var PAPU = function(nes) {
+export function PAPU(nes) {
   this.nes = nes;
 
   this.square1 = new ChannelSquare(this, true);
@@ -1369,5 +1369,3 @@ ChannelTriangle.prototype = {
       this.lengthCounter > 0;
   }
 };
-
-module.exports = PAPU;
