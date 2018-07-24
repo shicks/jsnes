@@ -4,6 +4,14 @@ import {Tile} from './tile.js';
 export function ROM(nes) {
   this.nes = nes;
 
+  // TODO(sdh): consider computing a hash/checksum for indexing save
+  // states in localstorage.  Note that this will blow up when we reload
+  // tons of different versions of hacked roms, so for now we can just
+  // key off of something simpler? like nothing?  definitely need a way
+  // to uncorrupt in case of mismatch - button to clear localstorage and reset?
+
+  this.hash = 0;
+
   this.mapperName = new Array(92);
 
   for (var i = 0; i < 92; i++) {
@@ -90,9 +98,7 @@ ROM.prototype = {
     this.trainer = (this.header[6] & 4) !== 0;
     this.fourScreen = (this.header[6] & 8) !== 0;
     this.mapperType = (this.header[6] >> 4) | (this.header[7] & 0xf0);
-    /* TODO
-        if (this.batteryRam)
-            this.loadBatteryRam();*/
+
     // Check whether byte 8-15 are zero's:
     var foundError = false;
     for (i = 8; i < 16; i++) {
@@ -113,7 +119,8 @@ ROM.prototype = {
         if (offset + j >= data.length) {
           break;
         }
-        this.rom[i][j] = data.charCodeAt(offset + j) & 0xff;
+        const x = this.rom[i][j] = data.charCodeAt(offset + j) & 0xff;
+        this.hash = ((this.hash * 31 >>> 0) + x) >>> 0;
       }
       offset += 16384;
     }
@@ -125,7 +132,8 @@ ROM.prototype = {
         if (offset + j >= data.length) {
           break;
         }
-        this.vrom[i][j] = data.charCodeAt(offset + j) & 0xff;
+        const x = this.vrom[i][j] = data.charCodeAt(offset + j) & 0xff;
+        this.hash = ((this.hash * 31 >>> 0) + x) >>> 0;
       }
       offset += 4096;
     }
@@ -163,6 +171,7 @@ ROM.prototype = {
     }
 
     this.valid = true;
+    this.hash = this.hash.toString(36);
   },
 
   getMirroringType: function() {

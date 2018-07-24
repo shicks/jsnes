@@ -5,6 +5,8 @@ export function CPU(nes) {
 
   // Keep Chrome happy
   this.mem = null;
+  // which 8k bank is in each $2000-long segment
+  this.banks = null;
   this.REG_ACC = null;
   this.REG_X = null;
   this.REG_Y = null;
@@ -41,6 +43,7 @@ CPU.prototype = {
   reset: function() {
     // Main memory
     this.mem = new Array(0x10000);
+    this.banks = [0, 0, 0, 0, 0, 0, 0, 0];
 
     for (var i = 0; i < 0x2000; i++) {
       this.mem[i] = 0xff;
@@ -1056,6 +1059,9 @@ CPU.prototype = {
       this.mem[addr & 0x7ff] = val;
     } else {
       this.nes.mmap.write(addr, val);
+    }
+    if (this.nes.battery && (addr & 0xe000) == 0x6000) {
+      this.nes.battery.store(addr);
     }
   },
 

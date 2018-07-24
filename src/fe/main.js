@@ -66,7 +66,7 @@ class Main {
       }
     });
 
-    this.nes = new NES({
+    this.nes = window.nes = new NES({
       onFrame: this.screen.setBuffer.bind(this.screen),
       onStatusUpdate: console.log,
       onAudioSample: this.speakers.writeSample.bind(this.speakers),
@@ -77,19 +77,7 @@ class Main {
       onWriteFrame: this.screen.writeBuffer.bind(this.screen),
     });
 
-    this.keyboardController = new KeyboardController({
-      onButtonDown: this.nes.buttonDown.bind(this.nes),
-      onButtonUp: this.nes.buttonUp.bind(this.nes),
-    });
-    document.addEventListener(
-      "keydown",
-      this.keyboardController.handleKeyDown.bind(this.keyboardController));
-    document.addEventListener(
-      "keyup",
-      this.keyboardController.handleKeyUp.bind(this.keyboardController));
-    document.addEventListener(
-      "keypress",
-      this.keyboardController.handleKeyPress.bind(this.keyboardController));
+    this.keyboardController = new KeyboardController(this);
 
     // window.addEventListener("resize", this.layout.bind(this));
     // this.layout();

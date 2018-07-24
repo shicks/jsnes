@@ -1,5 +1,8 @@
 import {Controller} from '../controller.js';
 
+// TODO - keybord buttons to (1) pause/resume, (2) speed up/slow down,
+//        (3) save/restore state [consider multiple states?]
+
 // Mapping keyboard code to [controller, button]
 const KEYS = {
   88: [1, Controller.BUTTON_A], // X
@@ -18,19 +21,25 @@ const KEYS = {
   104: [2, Controller.BUTTON_UP], // Num-8
   98: [2, Controller.BUTTON_DOWN], // Num-2
   100: [2, Controller.BUTTON_LEFT], // Num-4
-  102: [2, Controller.BUTTON_RIGHT] // Num-6
+  102: [2, Controller.BUTTON_RIGHT], // Num-6
+};
+
+const FUNCTIONS = {
+  80: (main) => main.handlePauseResume(),  // P
 };
 
 export class KeyboardController {
-  constructor(options) {
-    this.onButtonDown = options.onButtonDown;
-    this.onButtonUp = options.onButtonUp;
+  constructor(main) {
+    this.main = main;
+    document.addEventListener("keydown", (e) => this.handleKeyDown(e));
+    document.addEventListener("keyup", (e) => this.handleKeyUp(e));
+    document.addEventListener("keypress", (e) => this.handleKeyPress(e));
   }
 
   handleKeyDown(e) {
     var key = KEYS[e.keyCode];
     if (key) {
-      this.onButtonDown(key[0], key[1]);
+      this.main.nes.buttonDown(key[0], key[1]);
       e.preventDefault();
     }
   }
@@ -38,7 +47,13 @@ export class KeyboardController {
   handleKeyUp(e) {
     var key = KEYS[e.keyCode];
     if (key) {
-      this.onButtonUp(key[0], key[1]);
+      this.main.nes.buttonUp(key[0], key[1]);
+      e.preventDefault();
+      return;
+    }
+    const func = FUNCTIONS[e.keyCode];
+    if (func) {
+      func(this.main);
       e.preventDefault();
     }
   }

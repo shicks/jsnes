@@ -1,3 +1,4 @@
+import {Battery} from './battery.js';
 import {CPU} from './cpu.js';
 import {Controller} from './controller.js';
 import {PPU} from './ppu.js';
@@ -35,6 +36,7 @@ export function NES(opts) {
   this.cpu = new CPU(this);
   this.ppu = new PPU(this);
   this.papu = new PAPU(this);
+  this.battery = new Battery(this);
   this.mmap = null; // set in loadROM()
   this.controllers = {
     1: new Controller(),
@@ -57,9 +59,7 @@ NES.prototype = {
 
   // Resets the system
   reset: function() {
-    if (this.mmap !== null) {
-      this.mmap.reset();
-    }
+    if (this.mmap) this.mmap.reset();
 
     this.cpu.reset();
     this.ppu.reset();
@@ -178,6 +178,7 @@ NES.prototype = {
     this.rom.load(data);
 
     this.reset();
+    if (this.rom.batteryRam && this.battery) this.battery.load();
     this.mmap = this.rom.createMapper();
     this.mmap.loadROM();
     this.ppu.setMirroring(this.rom.getMirroringType());
