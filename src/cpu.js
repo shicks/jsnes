@@ -1,12 +1,11 @@
 import * as utils from './utils.js';
+import {Debug} from './debug.js';
 
 export function CPU(nes) {
   this.nes = nes;
 
   // Keep Chrome happy
   this.mem = null;
-  // which 8k bank is in each $2000-long segment
-  this.banks = null;
   this.REG_ACC = null;
   this.REG_X = null;
   this.REG_Y = null;
@@ -43,7 +42,6 @@ CPU.prototype = {
   reset: function() {
     // Main memory
     this.mem = new Array(0x10000);
-    this.banks = [0, 0, 0, 0, 0, 0, 0, 0];
 
     for (var i = 0; i < 0x2000; i++) {
       this.mem[i] = 0xff;
@@ -100,7 +98,7 @@ CPU.prototype = {
 
   // Emulates a single CPU instruction, returns the number of cycles
   emulate: function() {
-    var temp;
+    var temp, temp2;
     var add;
 
     // Check interrupts:
@@ -146,7 +144,8 @@ CPU.prototype = {
       this.irqRequested = false;
     }
 
-    var opinf = this.opdata[this.nes.mmap.load(this.REG_PC + 1)];
+    var opcode = this.nes.mmap.load(this.REG_PC + 1);
+    var opinf = this.opdata[opcode];
     var cycleCount = opinf >> 24;
     var cycleAdd = 0;
 
@@ -157,12 +156,16 @@ CPU.prototype = {
     var opaddr = this.REG_PC;
     this.REG_PC += (opinf >> 16) & 0xff;
 
+    this.nes.debug.logCpu(opcode, opaddr + 1);
+
+    var logmem = false;
     var addr = 0;
     switch (addrMode) {
       case 0: {
         // Zero Page mode. Use the address given after the opcode,
         // but without high byte.
         addr = this.load(opaddr + 2);
+        logmem = true;
         break;
       }
       case 1: {
@@ -183,6 +186,7 @@ CPU.prototype = {
         // Absolute mode. Use the two bytes following the opcode as
         // an address.
         addr = this.load16bit(opaddr + 2);
+        logmem = true;
         break;
       }
       case 4: {
@@ -201,6 +205,7 @@ CPU.prototype = {
         // after the opcode, then add the
         // X register to it to get the final address.
         addr = (this.load(opaddr + 2) + this.REG_X) & 0xff;
+        logmem = true;
         break;
       }
       case 7: {
@@ -208,6 +213,7 @@ CPU.prototype = {
         // after the opcode, then add the
         // Y register to it to get the final address.
         addr = (this.load(opaddr + 2) + this.REG_Y) & 0xff;
+        logmem = true;
         break;
       }
       case 8: {
@@ -218,6 +224,7 @@ CPU.prototype = {
           cycleAdd = 1;
         }
         addr += this.REG_X;
+        logmem = true;
         break;
       }
       case 9: {
@@ -228,6 +235,7 @@ CPU.prototype = {
           cycleAdd = 1;
         }
         addr += this.REG_Y;
+        logmem = true;
         break;
       }
       case 10: {
@@ -241,7 +249,8 @@ CPU.prototype = {
         }
         addr += this.REG_X;
         addr &= 0xff;
-        addr = this.load16bit(addr);
+        addr = this.load16bit(addr, true);
+        logmem = true;
         break;
       }
       case 11: {
@@ -250,29 +259,29 @@ CPU.prototype = {
         // (and the one following). Add to that address the contents
         // of the Y register. Fetch the value
         // stored at that adress.
-        addr = this.load16bit(this.load(opaddr + 2));
+        addr = this.load16bit(this.load(opaddr + 2), true);
         if ((addr & 0xff00) !== ((addr + this.REG_Y) & 0xff00)) {
           cycleAdd = 1;
         }
         addr += this.REG_Y;
+        logmem = true;
         break;
       }
       case 12: {
         // Indirect Absolute mode. Find the 16-bit address contained
         // at the given location.
-        addr = this.load16bit(opaddr + 2); // Find op
-        if (addr < 0x1fff) {
+        const a = this.load16bit(opaddr + 2); // Find op
+        if (a < 0x1fff) {
           addr =
-            this.mem[addr] +
-            (this.mem[(addr & 0xff00) | (((addr & 0xff) + 1) & 0xff)] << 8); // Read from address given in op
+            this.mem[a] +
+            (this.mem[(a & 0xff00) | (((a & 0xff) + 1) & 0xff)] << 8); // Read from address given in op
         } else {
           addr =
-            this.nes.mmap.load(addr) +
-            (this.nes.mmap.load(
-              (addr & 0xff00) | (((addr & 0xff) + 1) & 0xff)
-            ) <<
-              8);
+            this.nes.mmap.load(a) +
+            (this.nes.mmap.load((a & 0xff00) | (((a & 0xff) + 1) & 0xff)) << 8);
         }
+        this.nes.debug.logMem(Debug.MEM_RD16, a, addr);
+        logmem = true;
         break;
       }
     }
@@ -291,10 +300,11 @@ CPU.prototype = {
         // *******
 
         // Add with carry.
-        temp = this.REG_ACC + this.load(addr) + this.F_CARRY;
+        temp2 = this.load(addr, logmem);
+        temp = this.REG_ACC + temp2 + this.F_CARRY;
 
         if (
-          ((this.REG_ACC ^ this.load(addr)) & 0x80) === 0 &&
+          ((this.REG_ACC ^ temp2) & 0x80) === 0 &&
           ((this.REG_ACC ^ temp) & 0x80) !== 0
         ) {
           this.F_OVERFLOW = 1;
@@ -314,7 +324,7 @@ CPU.prototype = {
         // *******
 
         // AND memory with accumulator.
-        this.REG_ACC = this.REG_ACC & this.load(addr);
+        this.REG_ACC = this.REG_ACC & this.load(addr, logmem);
         this.F_SIGN = (this.REG_ACC >> 7) & 1;
         this.F_ZERO = this.REG_ACC;
         //this.REG_ACC = temp;
@@ -335,12 +345,13 @@ CPU.prototype = {
           this.F_SIGN = (this.REG_ACC >> 7) & 1;
           this.F_ZERO = this.REG_ACC;
         } else {
-          temp = this.load(addr);
-          this.F_CARRY = (temp >> 7) & 1;
-          temp = (temp << 1) & 255;
+          temp2 = this.load(addr);
+          this.F_CARRY = (temp2 >> 7) & 1;
+          temp = (temp2 << 1) & 255;
           this.F_SIGN = (temp >> 7) & 1;
           this.F_ZERO = temp;
           this.write(addr, temp);
+          if (logmem) this.nes.debug.logMem(Debug.MEM_RW, addr, temp2, temp);
         }
         break;
       }
@@ -385,7 +396,8 @@ CPU.prototype = {
         // * BIT *
         // *******
 
-        temp = this.load(addr);
+        // Test bits against A
+        temp = this.load(addr, logmem);
         this.F_SIGN = (temp >> 7) & 1;
         this.F_OVERFLOW = (temp >> 6) & 1;
         temp &= this.REG_ACC;
@@ -521,7 +533,7 @@ CPU.prototype = {
         // *******
 
         // Compare memory and accumulator:
-        temp = this.REG_ACC - this.load(addr);
+        temp = this.REG_ACC - this.load(addr, logmem);
         this.F_CARRY = temp >= 0 ? 1 : 0;
         this.F_SIGN = (temp >> 7) & 1;
         this.F_ZERO = temp & 0xff;
@@ -534,7 +546,7 @@ CPU.prototype = {
         // *******
 
         // Compare memory and index X:
-        temp = this.REG_X - this.load(addr);
+        temp = this.REG_X - this.load(addr, logmem);
         this.F_CARRY = temp >= 0 ? 1 : 0;
         this.F_SIGN = (temp >> 7) & 1;
         this.F_ZERO = temp & 0xff;
@@ -546,7 +558,7 @@ CPU.prototype = {
         // *******
 
         // Compare memory and index Y:
-        temp = this.REG_Y - this.load(addr);
+        temp = this.REG_Y - this.load(addr, logmem);
         this.F_CARRY = temp >= 0 ? 1 : 0;
         this.F_SIGN = (temp >> 7) & 1;
         this.F_ZERO = temp & 0xff;
@@ -558,10 +570,12 @@ CPU.prototype = {
         // *******
 
         // Decrement memory by one:
-        temp = (this.load(addr) - 1) & 0xff;
+        temp2 = this.load(addr);
+        temp = (temp2 - 1) & 0xff;
         this.F_SIGN = (temp >> 7) & 1;
         this.F_ZERO = temp;
         this.write(addr, temp);
+        if (logmem) this.nes.debug.logMem(Debug.MEM_RW, addr, temp2, temp);
         break;
       }
       case 21: {
@@ -592,7 +606,7 @@ CPU.prototype = {
         // *******
 
         // XOR Memory with accumulator, store in accumulator:
-        this.REG_ACC = (this.load(addr) ^ this.REG_ACC) & 0xff;
+        this.REG_ACC = (this.load(addr, logmem) ^ this.REG_ACC) & 0xff;
         this.F_SIGN = (this.REG_ACC >> 7) & 1;
         this.F_ZERO = this.REG_ACC;
         cycleCount += cycleAdd;
@@ -604,10 +618,12 @@ CPU.prototype = {
         // *******
 
         // Increment memory by one:
-        temp = (this.load(addr) + 1) & 0xff;
+        temp2 = this.load(addr)
+        temp = (temp2 + 1) & 0xff;
         this.F_SIGN = (temp >> 7) & 1;
         this.F_ZERO = temp;
         this.write(addr, temp & 0xff);
+        if (logmem) this.nes.debug.logMem(Debug.MEM_RW, addr, temp2, temp);
         break;
       }
       case 25: {
@@ -660,7 +676,7 @@ CPU.prototype = {
         // *******
 
         // Load accumulator with memory:
-        this.REG_ACC = this.load(addr);
+        this.REG_ACC = this.load(addr, logmem);
         this.F_SIGN = (this.REG_ACC >> 7) & 1;
         this.F_ZERO = this.REG_ACC;
         cycleCount += cycleAdd;
@@ -672,7 +688,7 @@ CPU.prototype = {
         // *******
 
         // Load index X with memory:
-        this.REG_X = this.load(addr);
+        this.REG_X = this.load(addr, logmem);
         this.F_SIGN = (this.REG_X >> 7) & 1;
         this.F_ZERO = this.REG_X;
         cycleCount += cycleAdd;
@@ -684,7 +700,7 @@ CPU.prototype = {
         // *******
 
         // Load index Y with memory:
-        this.REG_Y = this.load(addr);
+        this.REG_Y = this.load(addr, logmem);
         this.F_SIGN = (this.REG_Y >> 7) & 1;
         this.F_ZERO = this.REG_Y;
         cycleCount += cycleAdd;
@@ -698,16 +714,16 @@ CPU.prototype = {
         // Shift right one bit:
         if (addrMode === 4) {
           // ADDR_ACC
-
           temp = this.REG_ACC & 0xff;
           this.F_CARRY = temp & 1;
           temp >>= 1;
           this.REG_ACC = temp;
         } else {
-          temp = this.load(addr) & 0xff;
-          this.F_CARRY = temp & 1;
-          temp >>= 1;
+          temp2 = this.load(addr) & 0xff;
+          this.F_CARRY = temp2 & 1;
+          temp = temp2 >> 1;
           this.write(addr, temp);
+          if (logmem) this.nes.debug.logMem(Debug.MEM_RW, addr, temp2, temp);
         }
         this.F_SIGN = 0;
         this.F_ZERO = temp;
@@ -728,7 +744,7 @@ CPU.prototype = {
         // *******
 
         // OR memory with accumulator, store in accumulator.
-        temp = (this.load(addr) | this.REG_ACC) & 255;
+        temp = (this.load(addr, logmem) | this.REG_ACC) & 255;
         this.F_SIGN = (temp >> 7) & 1;
         this.F_ZERO = temp;
         this.REG_ACC = temp;
@@ -801,18 +817,18 @@ CPU.prototype = {
         // Rotate one bit left
         if (addrMode === 4) {
           // ADDR_ACC = 4
-
           temp = this.REG_ACC;
           add = this.F_CARRY;
           this.F_CARRY = (temp >> 7) & 1;
           temp = ((temp << 1) & 0xff) + add;
           this.REG_ACC = temp;
         } else {
-          temp = this.load(addr);
+          temp2 = this.load(addr);
           add = this.F_CARRY;
-          this.F_CARRY = (temp >> 7) & 1;
-          temp = ((temp << 1) & 0xff) + add;
+          this.F_CARRY = (temp2 >> 7) & 1;
+          temp = ((temp2 << 1) & 0xff) + add;
           this.write(addr, temp);
+          if (logmem) this.nes.debug.logMem(Debug.MEM_RW, addr, temp2, temp);
         }
         this.F_SIGN = (temp >> 7) & 1;
         this.F_ZERO = temp;
@@ -826,17 +842,17 @@ CPU.prototype = {
         // Rotate one bit right
         if (addrMode === 4) {
           // ADDR_ACC = 4
-
           add = this.F_CARRY << 7;
           this.F_CARRY = this.REG_ACC & 1;
           temp = (this.REG_ACC >> 1) + add;
           this.REG_ACC = temp;
         } else {
-          temp = this.load(addr);
+          temp2 = this.load(addr);
           add = this.F_CARRY << 7;
-          this.F_CARRY = temp & 1;
-          temp = (temp >> 1) + add;
+          this.F_CARRY = temp2 & 1;
+          temp = (temp2 >> 1) + add;
           this.write(addr, temp);
+          if (logmem) this.nes.debug.logMem(Debug.MEM_RW, addr, temp2, temp);
         }
         this.F_SIGN = (temp >> 7) & 1;
         this.F_ZERO = temp;
@@ -848,7 +864,6 @@ CPU.prototype = {
         // *******
 
         // Return from interrupt. Pull status and PC from stack.
-
         temp = this.pull();
         this.F_CARRY = temp & 1;
         this.F_ZERO = ((temp >> 1) & 1) === 0 ? 1 : 0;
@@ -888,12 +903,13 @@ CPU.prototype = {
         // * SBC *
         // *******
 
-        temp = this.REG_ACC - this.load(addr) - (1 - this.F_CARRY);
+        const v = this.load(addr, logmem);
+        temp = this.REG_ACC - v - (1 - this.F_CARRY);
         this.F_SIGN = (temp >> 7) & 1;
         this.F_ZERO = temp & 0xff;
         if (
           ((this.REG_ACC ^ temp) & 0x80) !== 0 &&
-          ((this.REG_ACC ^ this.load(addr)) & 0x80) !== 0
+          ((this.REG_ACC ^ v) & 0x80) !== 0
         ) {
           this.F_OVERFLOW = 1;
         } else {
@@ -938,6 +954,7 @@ CPU.prototype = {
 
         // Store accumulator in memory
         this.write(addr, this.REG_ACC);
+        if (logmem) this.nes.debug.logMem(Debug.MEM_WR, addr, this.REG_ACC);
         break;
       }
       case 48: {
@@ -947,6 +964,7 @@ CPU.prototype = {
 
         // Store index X in memory
         this.write(addr, this.REG_X);
+        if (logmem) this.nes.debug.logMem(Debug.MEM_WR, addr, this.REG_X);
         break;
       }
       case 49: {
@@ -956,6 +974,7 @@ CPU.prototype = {
 
         // Store index Y in memory:
         this.write(addr, this.REG_Y);
+        if (logmem) this.nes.debug.logMem(Debug.MEM_WR, addr, this.REG_Y);
         break;
       }
       case 50: {
@@ -1038,31 +1057,41 @@ CPU.prototype = {
     return cycleCount;
   },
 
-  load: function(addr) {
+  load: function(addr, opt_log) {
+    let result;
     if (addr < 0x2000) {
-      return this.mem[addr & 0x7ff];
+      addr &= 0x7ff;
+      result = this.mem[addr];
     } else {
-      return this.nes.mmap.load(addr);
+      result = this.nes.mmap.load(addr);
     }
+    if (opt_log) this.nes.debug.logMem(Debug.MEM_RD, addr, result);
+    return result;
   },
 
-  load16bit: function(addr) {
+  load16bit: function(addr, opt_log) {
+    let result;
     if (addr < 0x1fff) {
-      return this.mem[addr & 0x7ff] | (this.mem[(addr + 1) & 0x7ff] << 8);
+      addr &= 0x7ff;
+      result = this.mem[addr] | (this.mem[(addr + 1) & 0x7ff] << 8);
     } else {
-      return this.nes.mmap.load(addr) | (this.nes.mmap.load(addr + 1) << 8);
+      result = this.nes.mmap.load(addr) | (this.nes.mmap.load(addr + 1) << 8);
     }
+    if (opt_log) this.nes.debug.logMem(Debug.MEM_RD16, addr, result);
+    return result;
   },
 
-  write: function(addr, val) {
+  write: function(addr, val, opt_log) {
     if (addr < 0x2000) {
-      this.mem[addr & 0x7ff] = val;
+      addr &= 0x7ff;
+      this.mem[addr] = val;
     } else {
       this.nes.mmap.write(addr, val);
     }
     if (this.nes.battery && (addr & 0xe000) == 0x6000) {
       this.nes.battery.store(addr);
     }
+    if (opt_log) this.nes.debug.logMem(Debug.MEM_WR, addr, val);
   },
 
   requestIrq: function(type) {
@@ -1183,7 +1212,7 @@ CPU.prototype = {
     "F_NOTUSED",
     "F_NOTUSED_NEW",
     "F_BRK",
-    "F_BRK_NEW"
+    "F_BRK_NEW",
   ],
 
   toJSON: function() {
@@ -1203,6 +1232,8 @@ var OpData = function() {
   for (var i = 0; i < 256; i++) this.opdata[i] = 0xff;
 
   // Now fill in all valid opcodes:
+  // TODO(sdh): we can derive the size from the addressing mode,
+  // so remove the parameter and instead look up in a table.
 
   // ADC:
   this.setOp(this.INS_ADC, 0x69, this.ADDR_IMM, 2, 2);
@@ -1552,7 +1583,7 @@ var OpData = function() {
     "Relative            ",
     "Implied             ",
     "Absolute            ",
-    "Accumulator         ",
+    "Accumulator         ", // note: this is not a real mode, it should be imp
     "Immediate           ",
     "Zero Page,X         ",
     "Zero Page,Y         ",
@@ -1560,7 +1591,7 @@ var OpData = function() {
     "Absolute,Y          ",
     "Preindexed Indirect ",
     "Postindexed Indirect",
-    "Indirect Absolute   "
+    "Indirect Absolute   ",
   );
 };
 

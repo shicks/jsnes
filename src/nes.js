@@ -4,6 +4,7 @@ import {Controller} from './controller.js';
 import {PPU} from './ppu.js';
 import {PAPU} from './papu.js';
 import {ROM} from './rom.js';
+import {Debug} from './debug.js';
 
 export function NES(opts) {
   this.opts = {
@@ -51,6 +52,11 @@ export function NES(opts) {
   this.zapperMove = this.zapperMove.bind(this);
   this.zapperFireDown = this.zapperFireDown.bind(this);
   this.zapperFireUp = this.zapperFireUp.bind(this);
+
+  // which 8k bank is in each $2000-long segment
+  this.banks = new Array(8);
+  // for logging, etc
+  this.debug = new Debug(this);
 }
 
 NES.prototype = {

@@ -390,8 +390,8 @@ Mappers[0].prototype = {
     );
     // keep track of which banks are loaded
     const num = address >> 13;
-    this.nes.cpu.banks[num] = bank * 2;
-    this.nes.cpu.banks[num + 1] = bank * 2 + 1;
+    this.nes.banks[num] = bank * 2;
+    this.nes.banks[num + 1] = bank * 2 + 1;
   },
 
   loadVromBank: function(bank, address) {
@@ -499,7 +499,7 @@ Mappers[0].prototype = {
 
     // keep track of which banks are loaded
     const num = address >> 13;
-    this.nes.cpu.banks[num] = bank8k;
+    this.nes.banks[num] = bank8k;
   },
 
   clockIrqCounter: function() {
