@@ -21,3 +21,7 @@ export function toJSON(obj) {
   }
   return state;
 }
+
+export function hex(pad, num) {
+  return '$' + num.toString(16).padStart(pad, 0);
+}

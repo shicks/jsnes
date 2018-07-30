@@ -24,13 +24,15 @@ const KEYS = {
   102: [2, Controller.BUTTON_RIGHT], // Num-6
 };
 
-const FUNCTIONS = {
-  80: (main) => main.handlePauseResume(),  // P
-};
-
 export class KeyboardController {
   constructor(main) {
     this.main = main;
+
+    main.functions = main.functions || {};
+    main.functions[80] = (main) => main.handlePauseResume(),  // P (Pause)
+    main.functions[81] = (main) => main.save(), // Q (Save)
+    main.functions[87] = (main) => main.load(), // W (Load)
+
     document.addEventListener("keydown", (e) => this.handleKeyDown(e));
     document.addEventListener("keyup", (e) => this.handleKeyUp(e));
     document.addEventListener("keypress", (e) => this.handleKeyPress(e));
@@ -51,7 +53,7 @@ export class KeyboardController {
       e.preventDefault();
       return;
     }
-    const func = FUNCTIONS[e.keyCode];
+    const func = main.functions && main.functions[e.keyCode];
     if (func) {
       func(this.main);
       e.preventDefault();

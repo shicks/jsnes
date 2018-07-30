@@ -12,6 +12,7 @@ export function NES(opts) {
     onAudioSample: null,
     onStatusUpdate: function() {},
     onBatteryRamWrite: function() {},
+    onBreak: () => {},
 
     // FIXME: not actually used except for in PAPU
     preferredFrameRate: 60,
@@ -57,6 +58,7 @@ export function NES(opts) {
   this.banks = new Array(8);
   // for logging, etc
   this.debug = new Debug(this);
+  this.breakpointCycles = null;
 }
 
 NES.prototype = {
@@ -76,13 +78,24 @@ NES.prototype = {
   },
 
   frame: function() {
-    this.ppu.startFrame();
     var cycles = 0;
+    if (this.breakpointCycles != null) {
+      cycles = this.breakpointCycles;
+      this.breakpointCycles = null;
+    } else {
+      this.ppu.startFrame();
+    }
     var emulateSound = this.opts.emulateSound;
     var cpu = this.cpu;
     var ppu = this.ppu;
     var papu = this.papu;
     FRAMELOOP: for (;;) {
+      if (this.debug.break) {
+        this.debug.break = false;
+        this.breakpointCycles = cycles;
+        this.opts.onBreak();
+        return;
+      }
       if (cpu.cyclesToHalt === 0) {
         // Execute a CPU instruction
         cycles = cpu.emulate();

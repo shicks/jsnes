@@ -24,6 +24,7 @@ export function CPU(nes) {
   this.F_NOTUSED_NEW = null;
   this.F_BRK = null;
   this.F_BRK_NEW = null;
+  this.opmeta = null;
   this.opdata = null;
   this.cyclesToHalt = null;
   this.crash = null;
@@ -38,6 +39,61 @@ CPU.prototype = {
   IRQ_NORMAL: 0,
   IRQ_NMI: 1,
   IRQ_RESET: 2,
+
+  snapshot: function() {
+    // return an object that can be restored, includes all mem, etc
+    return {
+      mem: this.mem.slice(),
+      REG_ACC: this.REG_ACC,
+      REG_X: this.REG_X,
+      REG_Y: this.REG_Y,
+      REG_SP: this.REG_SP,
+      REG_PC: this.REG_PC,
+      REG_PC_NEW: this.REG_PC_NEW,
+      REG_STATUS: this.REG_STATUS,
+      F_CARRY: this.F_CARRY,
+      F_DECIMAL: this.F_DECIMAL,
+      F_INTERRUPT: this.F_INTERRUPT,
+      F_INTERRUPT: this.F_INTERRUPT,
+      F_OVERFLOW: this.F_OVERFLOW,
+      F_SIGN: this.F_SIGN,
+      F_ZERO: this.F_ZERO,
+      F_NOTUSED: this.F_NOTUSED,
+      F_NOTUSED: this.F_NOTUSED,
+      F_BRK: this.F_BRK,
+      F_BRK: this.F_BRK,
+      cyclesToHalt: this.cyclesToHalt,
+      crash: this.crash,
+      irqRequested: this.irqRequested,
+      irqType: this.irqType,
+    };
+  },
+
+  restore: function(snapshot) {
+    this.mem = snapshot.mem.slice();
+    this.REG_ACC = snapshot.REG_ACC;
+    this.REG_X = snapshot.REG_X;
+    this.REG_Y = snapshot.REG_Y;
+    this.REG_SP = snapshot.REG_SP;
+    this.REG_PC = snapshot.REG_PC;
+    this.REG_PC_NEW = snapshot.REG_PC_NEW;
+    this.REG_STATUS = snapshot.REG_STATUS;
+    this.F_CARRY = snapshot.F_CARRY;
+    this.F_DECIMAL = snapshot.F_DECIMAL;
+    this.F_INTERRUPT = snapshot.F_INTERRUPT;
+    this.F_INTERRUPT = snapshot.F_INTERRUPT;
+    this.F_OVERFLOW = snapshot.F_OVERFLOW;
+    this.F_SIGN = snapshot.F_SIGN;
+    this.F_ZERO = snapshot.F_ZERO;
+    this.F_NOTUSED = snapshot.F_NOTUSED;
+    this.F_NOTUSED = snapshot.F_NOTUSED;
+    this.F_BRK = snapshot.F_BRK;
+    this.F_BRK = snapshot.F_BRK;
+    this.cyclesToHalt = snapshot.cyclesToHalt;
+    this.crash = snapshot.crash;
+    this.irqRequested = snapshot.irqRequested;
+    this.irqType = snapshot.irqType;
+  },
 
   reset: function() {
     // Main memory
@@ -85,7 +141,8 @@ CPU.prototype = {
     this.F_BRK = 1;
     this.F_BRK_NEW = 1;
 
-    this.opdata = new OpData().opdata;
+    this.opmeta = new OpData();
+    this.opdata = this.opmeta.opdata;
     this.cyclesToHalt = 0;
 
     // Reset crash flag:
@@ -1578,7 +1635,7 @@ var OpData = function() {
   this.instname[54] = "TXS";
   this.instname[55] = "TYA";
 
-  this.addrDesc = new Array(
+  this.addrDesc = [
     "Zero Page           ",
     "Relative            ",
     "Implied             ",
@@ -1592,8 +1649,28 @@ var OpData = function() {
     "Preindexed Indirect ",
     "Postindexed Indirect",
     "Indirect Absolute   ",
-  );
+  ];
+
+  this.addrFmt = [
+    (pc, a) => utils.hex(2, a),                       // zp   $34
+    (pc, a) => utils.hex(4, pc + ((a<<24)>>24) + 1),  // r    $c15f
+    (pc, a) => '',                                    // imp
+    (pc, a) => utils.hex(4, a),                       // a    $c13f
+    (pc, a) => '',                                    // (acc)
+    (pc, a) => '#' + utils.hex(2, a),                 // imm  #$12
+    (pc, a) => utils.hex(2, a) + ',x',                // zp,x $12,x
+    (pc, a) => utils.hex(2, a) + ',y',                // zp,y $12,y
+    (pc, a) => utils.hex(4, a) + ',x',                // a,x $1234,x
+    (pc, a) => utils.hex(4, a) + ',y',                // a,y $1234,y
+    (pc, a) => `(${utils.hex(2, a)},x)`,              // (zp,x) ($12,x)
+    (pc, a) => `(${utils.hex(2, a)}),y`,              // (zp),y ($12),y
+    (pc, a) => `(${utils.hex(4, a)})`,                // ind-abs ($1234)
+  ];
+
+  // number of extra bytes to read
+  this.addrSize = [1, 1, 0, 2, 0, 1, 1, 1, 2, 2, 1, 1, 2];
 };
+
 
 OpData.prototype = {
   INS_ADC: 0,

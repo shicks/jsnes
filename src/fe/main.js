@@ -5,6 +5,7 @@ import {Speakers} from './speakers.js';
 import {KeyboardController} from './keyboardcontroller.js';
 import {FrameTimer} from './frametimer.js';
 
+const bufferLog = () => {}; console.log.bind(console);
 
 function loadBinary(path, callback, handleProgress) {
   var req = new XMLHttpRequest();
@@ -52,7 +53,7 @@ class Main {
         //   done by audio instead of requestAnimationFrame.
         // - System can't run emulator at full speed. In this case it'll stop
         //    firing requestAnimationFrame.
-        console.log(
+        bufferLog(
           "Buffer underrun, running another frame to try and catch up"
         );
         this.nes.frame();
@@ -60,7 +61,7 @@ class Main {
         // frame so we might need a second frame to be run. Give up after that
         // though -- the system is not catching up
         if (this.speakers.buffer.size() < desiredSize) {
-          console.log("Still buffer underrun, running a second frame");
+          bufferLog("Still buffer underrun, running a second frame");
           this.nes.frame();
         }
       }
@@ -70,6 +71,7 @@ class Main {
       onFrame: this.screen.setBuffer.bind(this.screen),
       onStatusUpdate: console.log,
       onAudioSample: this.speakers.writeSample.bind(this.speakers),
+      onBreak: () => this.stop(),
     });
 
     this.frameTimer = new FrameTimer({
@@ -132,14 +134,16 @@ class Main {
   }
 
   start() {
+    this.state.paused = false;
     this.frameTimer.start();
     this.speakers.start();
     this.fpsInterval = setInterval(() => {
-      console.log(`FPS: ${this.nes.getFPS()}`);
+      bufferLog(`FPS: ${this.nes.getFPS()}`);
     }, 1000);
   }
 
   stop() {
+    this.state.paused = true;
     this.frameTimer.stop();
     this.speakers.stop();
     clearInterval(this.fpsInterval);
@@ -147,10 +151,8 @@ class Main {
 
   handlePauseResume() {
     if (this.state.paused) {
-      this.state.paused = false;
       this.start();
     } else {
-      this.state.paused = true;
       this.stop();
     }
   }
@@ -163,4 +165,23 @@ class Main {
   // }
 }
 
-new Main(document.getElementById('screen'));
+let snapshot;
+window.main = new Main(document.getElementById('screen'));
+main.advance = () => { nes.debug.breakIn = 100; main.start(); };
+main.save = () => {snapshot = nes.cpu.snapshot();}; // q
+main.load = () => {nes.cpu.restore(snapshot);}; // w
+
+
+// main.track = (type) => {
+//   main.functions[68] = (main) => console.log(main.nes.debug.mt.expectDiff()), // D (Diff)
+//   main.functions[82] = (main) => main.nes.debug.mt.reset(), // R (Reset)
+//   main.functions[83] = (main) => console.log(main.nes.debug.mt.expectSame()), // S (Same)
+//   main.functions[76] = (main) => console.log(main.nes.debug.mt.candidates()), // L (List)
+// };
+
+main.track = (type) => {
+  nes.debug.coverage.clear();
+  main.functions[67] = () => console.log(nes.debug.coverage.expectCovered()); // C (Covered)
+  main.functions[85] = () => console.log(nes.debug.coverage.expectUncovered()); // U (Uncov)
+  main.functions[86] = () => console.log(nes.debug.coverage.candidates(type)); // V (List)
+};

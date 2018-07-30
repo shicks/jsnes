@@ -51,15 +51,17 @@ export class FrameTimer {
   stop() {
     this.running = false;
     if (this._requestID) window.cancelAnimationFrame(this._requestID);
-    if (this.bodgeInterval) clearInterval(this.bodgeInterval.bind(this));
+    if (this.bodgeInterval) clearInterval(this.bodgeInterval);
   }
 
   requestAnimationFrame() {
-    this._requestID = window.requestAnimationFrame(this.onAnimationFrame.bind(this));
+    this._requestID = window.requestAnimationFrame(() => this.onAnimationFrame());
   }
 
   onAnimationFrame() {
     if (this.calibrating) {
+      console.log('Calibrating framerate');
+      // TODO(sdh): probably avoid calibrating after a breakpoint?
       if (this.calibrationStartTime === null) {
         this.calibrationStartTime = new Date().getTime();
         this.calibrationCurrentFrames = 0;
@@ -70,6 +72,7 @@ export class FrameTimer {
       // Calibration complete!
       if (this.calibrationCurrentFrames === this.calibrationFrames) {
         this.calibrating = false;
+        console.log(`Calibration complete: FPS ${fps}`);
 
         var now = new Date().getTime();
         var delta = now - this.calibrationStartTime;
