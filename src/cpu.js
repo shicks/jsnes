@@ -1164,6 +1164,7 @@ CPU.prototype = {
 
   push: function(value) {
     this.nes.mmap.write(this.REG_SP, value);
+    this.nes.debug.logMem(Debug.MEM_WR, this.REG_SP, value);
     this.REG_SP--;
     this.REG_SP = 0x0100 | (this.REG_SP & 0xff);
   },
@@ -1175,7 +1176,9 @@ CPU.prototype = {
   pull: function() {
     this.REG_SP++;
     this.REG_SP = 0x0100 | (this.REG_SP & 0xff);
-    return this.nes.mmap.load(this.REG_SP);
+    const value = this.nes.mmap.load(this.REG_SP);
+    this.nes.debug.logMem(Debug.MEM_RD, this.REG_SP, value);
+    return value;
   },
 
   pageCrossed: function(addr1, addr2) {

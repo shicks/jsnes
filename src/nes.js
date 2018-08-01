@@ -142,6 +142,7 @@ NES.prototype = {
         if (ppu.curX === 341) {
           ppu.curX = 0;
           ppu.endScanline();
+          this.debug.logScanline(ppu.scanline);
         }
       }
     }

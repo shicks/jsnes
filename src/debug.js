@@ -1,3 +1,15 @@
+// TODO - more pluggable debug framework
+//  - provide a few hooks via properties on nes:
+//    * logCpu, logMem, logPpu, logBank, ...
+//  - default to null, but otherwise is an array of functions
+//    - when attaching a function, returns a deregister handler?
+//      or possibly accept a promise, unregister when resolved?
+//  - make it easy to plug in a DOM-based logger as well...
+//    - possibly one that can be triggered by a keypress?
+//  - don't incur costs for loggers we don't care about...
+//  - watch memory, record set of values, set of write addrs, etc
+//  - record and (fast) replay input sequences?
+
 // Debug logging
 
 // ROM address is 16 bits, but only 13 are meaningful
@@ -56,11 +68,12 @@
 
 export class Debug {
   constructor(nes, size = 0x4000000) { // default to 64MB
-     size &= ~0xff; // size must be a multiple of 256
+    size &= ~0xff; // size must be a multiple of 256
     this.nes = nes;
     this.buffer = new Uint8Array(size);
     this.size = size;
     this.pos = 0;
+    this.watches = {}; // {[addr]: {[break_#]: function()}}
     this.breakpoints = new Uint8Array(0x10000);
     this.coverage = new Debug.Coverage(this.nes);
     this.breakIf = () => true,
@@ -103,7 +116,11 @@ export class Debug {
     const addr =
         bank != null ? (bank << 13) | (pc & 0x1fff) : pc < 0x2000 ? pc & 0x7ff : pc;
     this.coverage.cov[addr] |= (bank != null ? BREAK_PRG_X : BREAK_RAM_X);
-if(bank==0x1e&&(pc&0x1ffd)==0x900)return; // blackbox
+if(this.watches && addr in this.watches){
+const watch = this.watches[addr][bank != null ? BREAK_PRG_X : BREAK_RAM_X];
+if(watch)watch();
+}
+//if(bank==0x1e&&(pc&0x1ffd)==0x900)return; // blackbox
     const len = 4 + (bank != null)
     // pad up to the next block if necessary
     while ((this.pos + len ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
@@ -131,14 +148,21 @@ if(bank==0x1e&&(pc&0x1ffd)==0x900)return; // blackbox
   }
 
   logMem(op, address, value, write = -1) {
-    const bank = this.nes.banks[address >>> 13];
+    const bank = op & MEM_READ ? this.nes.banks[address >>> 13] : null;
     const addr =
         bank != null ? (bank << 13) | (address & 0x1fff) :
             address < 0x2000 ? address & 0x7ff : address;
     this.coverage.cov[addr] |= (bank != null ? BREAK_PRG_R :
                                 (op & MEM_READ ? BREAK_RAM_R : 0) |
                                 (op & MEM_WRITE ? BREAK_RAM_W : 0));
-if(bank==null&&address==9)return; // blackbox
+if(this.watches && addr in this.watches){
+const w = this.watches[addr];
+const wr = bank != null ? w[BREAK_PRG_R] : op & MEM_READ ? w[BREAK_RAM_R] : null;
+const ww = op & MEM_WRITE ? w[BREAK_RAM_W] : null;
+if(wr)wr(value);
+if(ww)ww(write == -1 ? value : write);
+}
+//if(bank==null&&address==9)return; // blackbox
     if (bank != null) op |= PAGED;
     const len = LEN_BY_OP[op];
     if (len == 0) {
@@ -177,17 +201,29 @@ if(bank==null&&address==9)return; // blackbox
 // }
   }
 
-  logOther(op) {
-    if (this.pos == this.size) {console.log('reset log'); this.pos = 0;}
-    this.buffer[this.pos++] = op;
+  logScanline(line) {
+    if (line == 0) { // start vblank
+      if (this.pos == this.size) {console.log('reset log'); this.pos = 0;}
+      this.buffer[this.pos++] = Debug.VBLANK;
+    } else if (line > 20) {
+      while ((this.pos + 2 ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
+      if (this.pos == this.size) {console.log('reset log'); this.pos = 0;}
+      this.buffer[this.pos++] = Debug.SCANLINE;
+      this.buffer[this.pos++] = line - 21;
+    }
   }
+
+  // logOther(op) {
+  //   if (this.pos == this.size) {console.log('reset log'); this.pos = 0;}
+  //   this.buffer[this.pos++] = op;
+  // }
 
   /**
    * @param {function(opcode, pc, pcrom)} cpu
    * @param {function(addr, addrrom, read = undefined, written = undefined)} mem
-   * @param {function(op)} other
+   * @param {function(num)} scanline
    */
-  visitLog({cpu, mem, other} = {}, blocks = 10) {
+  visitLog({cpu, mem, scanline} = {}, blocks = 10) {
     blocks = Math.min((this.size >>> 8) - 1, blocks);
     let pos = (this.pos & ~0xff) - (blocks << 8);
     if (pos < 0) pos += this.size;
@@ -220,7 +256,11 @@ if(bank==null&&address==9)return; // blackbox
         break;
       }
       case 3: { // other
-        other && other(selector);
+        if (selector == Debug.VBLANK) {
+          scanline && scanline(-1);
+        } else if (selector == Debug.SCANLINE) {
+          scanline && scanline(this.buffer[pos++]);
+        }
         break;
       }
       default:
@@ -230,8 +270,10 @@ if(bank==null&&address==9)return; // blackbox
 
   trace(blocks = 10) {
     const parts = [];
+    let frame = 0;
     this.visitLog({
       cpu: (op, addr, romaddr) => {
+        // TODO - rewrite this to call formatInstruction
         const opmeta = this.nes.cpu.opmeta;
         const opinf = opmeta.opdata[op];
         const instr = opmeta.instname[opinf & 0xff];
@@ -261,6 +303,10 @@ if(bank==null&&address==9)return; // blackbox
         a = '$' + a.padStart(4 + (romaddr != null), '0');
         if (read != null) parts.push(`  read ${a} -> $${read.toString(16)}`);
         if (write != null) parts.push(`  write ${a} <- $${write.toString(16)}`);
+      },
+      scanline: (num) => {
+        if (num < 0) parts.push(`\nvblank frame ${frame}`);
+        if (num == 0) parts.push(`\nscanlines frame ${frame++}`);
       },
     }, blocks);
     console.log(parts.join(''));
@@ -395,7 +441,92 @@ Debug.MemTracker = class {
 
 // TODO - we could check against watches on every write, but that's more
 // invasive - instead, we just check each frame or so if anything updated
+
+// TODO - any way to configurably watch PRG page switches?
 Debug.Watch = class {
+  constructor(nes) {
+    this.nes = nes;
+  }
+
+  add(addr, type, op, {changed=false, ascii=true, value=null} = {}) {
+    // TODO - watch individual bits?
+    if (addr instanceof Array && addr.length == 1) addr = addr[0];
+    if (!(addr instanceof Array)) addr = [addr, addr];
+    const mode = BREAKPOINT_MODES[`${type}-${op}`];
+    if (!mode) throw new Error(`Bad mode: '${type}-${op}'`);
+    const ws = this.nes.debug.watches || (this.nes.debug.watches = {});
+    const fmt = (v, p) => `$${v.toString(16).padStart(p, 0)}${
+                           ascii&&p==2&&v>31&&v<127?' ('+String.fromCharCode(v)+')':''}`;
+    const read = type == 'ram' ?
+          (a) => this.nes.cpu.mem[a < 0x2000 ? a & 0x7ff : a] :
+          (a) => this.nes.rom.rom[a >>> 14][a & 0x3fff];
+    const pad = type = 'ram' ? 4 : 5;
+    const pc = () => {
+      const a = this.nes.cpu.REG_PC + 1;
+      const bank = this.nes.banks[a >>> 13];
+      return bank != null ? fmt(bank << 13 | a & 0x1fff, 5) : fmt(a, 4);
+    }
+    const scanline = () => `${this.nes.ppu.frame.toString(16).padStart(6,0)}:${
+                              this.nes.ppu.scanline < 21 ? -1 :
+                                  (this.nes.ppu.scanline - 21).toString(16).padStart(2,0)}`;
+    for (let i = addr[0]; i <= addr[1]; i++) {
+      const w = ws[i] || (ws[i] = {});
+      if (op == 'w') {
+        let last = read(i); // for keeping track of changes
+        w[mode] = (v) => {
+          if (value != null && v != value) return;
+          const next = v;
+          if (!changed || next != last) {
+            console.log(`${scanline()}: Write ${fmt(i, pad)}: ${fmt(last, 2)} -> ${
+                           fmt(next, 2)} at ${pc()}`);
+          }
+          last = next;
+        };
+      } else if (op == 'r') {
+        // TODO(sdh): option for 16-bit reads?
+        w[mode] = (v) => {
+          if (value != null && v != value) return;
+          console.log(`${scanline()}: Read ${fmt(i, pad)}: ${fmt(v, 2)} at ${pc()}`);
+        };
+      } else {
+        w[mode] = () => {
+          console.log(
+              `${scanline()}: Execute ${fmt(i, pad)}: ${
+               formatInstruction(this.nes, read(i), i, read)}`);
+        };
+      }
+    }
+  }
+
+  clear() {
+    this.nes.debug.watches = null;
+  }
+}
+
+const formatInstruction = (nes, op, addr, read) => {
+  const opmeta = nes.cpu.opmeta;
+  const opinf = opmeta.opdata[op];
+  const instr = opmeta.instname[opinf & 0xff];
+  let bytes = [op];
+  let arg = 0;
+  let factor = 0;
+  if (addr != null && read != null) { // can't really look up RAM
+    for (let i = 0; i < opmeta.addrSize[(opinf >> 8) & 0xff]; i++) {
+      const a = read(++addr);
+      bytes.push(a);
+      arg += (a << factor);
+      factor += 8;
+    }
+  } else {
+    arg = '??'; // don't know ram
+  }
+  const mode = opmeta.addrFmt[(opinf >> 8) & 0xff](addr, arg).padEnd(8);
+  bytes = bytes.map(x => x.toString(16).padStart(2, 0));
+  while (bytes.length < 3) bytes.push('  ');
+  return `${bytes.join(' ')} ${instr} ${mode}`;
+};
+
+Debug.WatchOld = class {
   constructor(nes) {
     this.nes = nes;
     this.watching = null;
@@ -453,8 +584,8 @@ Debug.MEM_RD16 = 0b00011010;
 Debug.MEM_WR   = 0b00100010;
 Debug.MEM_RW   = 0b00110010;
 // To pass as first arg or logOther
-Debug.VBLANK_START = 0b00000111;
-Debug.VBLANK_END   = 0b00000011;
+Debug.SCANLINE = 0b00000011; // next argument is scanline number, 0..240
+Debug.VBLANK   = 0b00000111;
 
 const CPU = 1;
 const PAGED = 4;

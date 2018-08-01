@@ -76,6 +76,7 @@ export function PPU(nes) {
   // Rendering Options:
   this.showSpr0Hit = false;
   this.clipToTvSize = true;
+  this.frame = 0;
 
   this.reset();
 };
@@ -166,6 +167,7 @@ PPU.prototype = {
 
     // Initialize misc vars:
     this.scanline = 0;
+    this.frame = 0;
     this.lastRenderedScanline = -1;
     this.curX = 0;
 
@@ -472,6 +474,7 @@ PPU.prototype = {
   endFrame: function() {
     var i, x, y;
     var buffer = this.buffer;
+    this.frame++;
 
     // Draw spr#0 hit coordinates:
     if (this.showSpr0Hit) {

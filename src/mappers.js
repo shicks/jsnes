@@ -392,6 +392,7 @@ Mappers[0].prototype = {
     const num = address >> 13;
     this.nes.banks[num] = bank * 2;
     this.nes.banks[num + 1] = bank * 2 + 1;
+    //console.log(`Load 16k bank ${(bank << 14).toString(16)} at ${address.toString(16)}`);
   },
 
   loadVromBank: function(bank, address) {
@@ -500,6 +501,8 @@ Mappers[0].prototype = {
     // keep track of which banks are loaded
     const num = address >> 13;
     this.nes.banks[num] = bank8k;
+    //if((bank8k&1)!=(num&1))  // only log for misaligned pages?
+    //console.log(`Load 8k bank ${(bank8k << 13).toString(16)} at ${address.toString(16)}`);
   },
 
   clockIrqCounter: function() {

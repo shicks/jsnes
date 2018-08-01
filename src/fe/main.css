@@ -1,4 +1,13 @@
 #screen {
   /* image-rendering: pixelated; /* webkit */
   image-rendering: optimizespeed; /* firefox */
+  display: inline-block;
+}
+
+.watch {
+  white-space: pre;
+  font-family: monospace;
+}
+.watch .value {
+  font-weight: bold;
 }

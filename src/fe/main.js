@@ -185,3 +185,53 @@ main.track = (type) => {
   main.functions[85] = () => console.log(nes.debug.coverage.expectUncovered()); // U (Uncov)
   main.functions[86] = () => console.log(nes.debug.coverage.candidates(type)); // V (List)
 };
+
+main.watch = (...addrs) => {
+  // TODO - display options? ascii? 16-bit?
+  const d = document.getElementById('debug');
+  const w = document.createElement('div');
+  d.appendChild(w);
+  w.classList.add('watch');
+  const close = document.createElement('span');
+  close.classList.add('close');
+  w.appendChild(close);
+  const map = {};
+  for (let addr of addrs) {
+    if (addr instanceof Array && addr.length == 1) addr = addr[0];
+    if (!(addr instanceof Array)) addr = [addr, addr];
+    for (let a = addr[0]; a <= addr[1]; a++) {
+      const label = document.createElement('span');
+      label.textContent = '   $' + a.toString(16).padStart(4, 0) + ': ';
+      label.classList.add('label');
+      w.appendChild(label);
+      const value = document.createElement('span');
+      map[a] = value;
+      value.classList.add('value');
+      w.appendChild(value);
+    }
+  }
+  let timeout = () => {
+    setTimeout(() => {
+      for (let addr in map) {
+        addr = Number(addr);
+        const newText = '$' + nes.cpu.mem[addr].toString(16).padStart(2, 0);
+        const el = map[addr];
+        if (el.textContent != newText) {
+          el.style.color = '#ff0000';
+          el.textContent = newText;
+          el.dataset['red'] = 255;
+        } else {
+          const red = Math.max(0, el.dataset['red'] -= 2);
+          el.style.color = `#${red.toString(16).padStart(2,0)}0000`;
+        }
+      }
+      timeout();
+    }, 30);
+  };  
+  close.textContent = 'x';
+  close.addEventListener('click', () => {
+    timeout = () => {};
+    w.remove();
+  });
+  timeout();
+};
