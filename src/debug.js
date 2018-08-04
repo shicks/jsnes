@@ -70,14 +70,20 @@ export class Debug {
   constructor(nes, size = 0x4000000) { // default to 64MB
     size &= ~0xff; // size must be a multiple of 256
     this.nes = nes;
+    // trace buffer
     this.buffer = new Uint8Array(size);
     this.size = size;
     this.pos = 0;
+    this.resets = 0;
+    this.waits = {};
+    this.waiting = false;
+    // ---
     this.watches = {}; // {[addr]: {[break_#]: function()}}
     this.breakpoints = new Uint8Array(0x10000);
     this.coverage = new Debug.Coverage(this.nes);
     this.breakIf = () => true,
     this.breakIn = null;
+    this.breakAtVBlank = false;
     this.break = false;
     this.mt = new Debug.MemTracker(this.nes);
   }
@@ -124,7 +130,7 @@ if(watch)watch();
     const len = 4 + (bank != null)
     // pad up to the next block if necessary
     while ((this.pos + len ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
-    if (this.pos == this.size) {console.log('reset log'); this.pos = 0;}
+    if (this.pos == this.size) {this.resets++; this.pos = 0;}
     this.buffer[this.pos++] = 1 | (bank != null ? PAGED : 0);
     this.buffer[this.pos++] = opcode;
     this.buffer[this.pos++] = pc;
@@ -170,7 +176,7 @@ if(ww)ww(write == -1 ? value : write);
       return;
     }
     while ((this.pos + len ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
-    if (this.pos == this.size) {console.log('reset log'); this.pos = 0;}
+    if (this.pos == this.size) {this.resets++; this.pos = 0;}
     this.buffer[this.pos++] = op;
     this.buffer[this.pos++] = address;
     this.buffer[this.pos++] = address >>> 8;
@@ -201,16 +207,29 @@ if(ww)ww(write == -1 ? value : write);
 // }
   }
 
-  logScanline(line) {
+  logScanline(line, frame) {
     if (line == 0) { // start vblank
-      if (this.pos == this.size) {console.log('reset log'); this.pos = 0;}
+      while ((this.pos + 3 ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
+      if (this.pos == this.size) {this.resets++; this.pos = 0;}
       this.buffer[this.pos++] = Debug.VBLANK;
+      this.buffer[this.pos++] = frame;
+      this.buffer[this.pos++] = frame >> 8;
+      if (this.breakAtVBlank) {
+        this.break = true;
+        this.breakAtVBlank = false;
+      }
     } else if (line > 20) {
       while ((this.pos + 2 ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
-      if (this.pos == this.size) {console.log('reset log'); this.pos = 0;}
+      if (this.pos == this.size) {this.resets++; this.pos = 0;}
       this.buffer[this.pos++] = Debug.SCANLINE;
       this.buffer[this.pos++] = line - 21;
     }
+  }
+
+  logInterrupt(type) {
+    // TODO - look for patterns of repeated CPU configurations to elide in the future
+    // Then just log the interrupt.
+    // Trick: we want to filter out scanline entries.
   }
 
   // logOther(op) {
@@ -219,17 +238,38 @@ if(ww)ww(write == -1 ? value : write);
   // }
 
   /**
-   * @param {function(opcode, pc, pcrom)} cpu
-   * @param {function(addr, addrrom, read = undefined, written = undefined)} mem
-   * @param {function(num)} scanline
+   * Returns a valid TracePosition.  If an argument is given, clamps it to the
+   * available range.  Otherwise returns the current position.
    */
-  visitLog({cpu, mem, scanline} = {}, blocks = 10) {
-    blocks = Math.min((this.size >>> 8) - 1, blocks);
-    let pos = (this.pos & ~0xff) - (blocks << 8);
-    if (pos < 0) pos += this.size;
-    
-    while (pos != this.pos) {
-      if (pos == this.size) pos = 0;
+  tracePosition(arg = undefined) {
+    if (!arg) return new TracePosition(this.size, this.resets, this.pos);
+    if (arg.resets == this.resets) return arg;
+    return new TracePosition(
+        this.size,
+        this.resets - 1,
+        Math.max((this.pos + 0x100) & ~0xff, arg.pos));
+  }
+
+  /**
+   * @param {function(opcode, pc, pcrom)=} cpu
+   * @param {function(addr, addrrom, read?, written?)=} mem
+   * @param {function(num)=} scanline
+   * @param {!TracePosition=} start
+   * @param {!TracePosition=} end
+   */
+  visitLog({cpu, mem, scanline} = {}, start = undefined, end = undefined) {
+    end = this.tracePosition(end instanceof TracePosition ? end : end || 0);
+    start =
+        this.tracePosition(
+            start instanceof TracePosition ? start : end.previous(start || 10));
+    let pos = start.pos;
+    let resets = start.resets;
+
+    while (resets < end.resets || pos < end.pos) {
+      if (pos == this.size) {
+        pos = 0;
+        resets++;
+      }
       const selector = this.buffer[pos++];
       switch (selector & 3) {
       case 0: // skip
@@ -257,7 +297,8 @@ if(ww)ww(write == -1 ? value : write);
       }
       case 3: { // other
         if (selector == Debug.VBLANK) {
-          scanline && scanline(-1);
+          const frame = this.buffer[pos++] | (this.buffer[pos++] << 8);
+          scanline && scanline(-1, frame);
         } else if (selector == Debug.SCANLINE) {
           scanline && scanline(this.buffer[pos++]);
         }
@@ -268,9 +309,12 @@ if(ww)ww(write == -1 ? value : write);
     }
   }
 
-  trace(blocks = 10) {
+  trace(start = undefined, end = undefined, log = console.log) {
+    end = end instanceof TracePosition ? end : tracePosition().previous(end || 0);
+    start = start instanceof TracePosition ? start : end.previous(start || 10);
     const parts = [];
-    let frame = 0;
+    let frame = '????';
+    let scanline = '??';
     this.visitLog({
       cpu: (op, addr, romaddr) => {
         // TODO - rewrite this to call formatInstruction
@@ -278,7 +322,7 @@ if(ww)ww(write == -1 ? value : write);
         const opinf = opmeta.opdata[op];
         const instr = opmeta.instname[opinf & 0xff];
         let pc = (romaddr != null ? romaddr : addr).toString(16);
-        pc = ('$' + pc.padStart(4 + (romaddr != null), '0')).padStart(8);
+        pc = ('$' + pc.padStart(4 + (romaddr != null), '0')).padStart(9);
         let bytes = [op];
         let arg = 0;
         let factor = 0;
@@ -296,7 +340,7 @@ if(ww)ww(write == -1 ? value : write);
         const mode = opmeta.addrFmt[(opinf >> 8) & 0xff](romaddr, arg).padEnd(8);
         bytes = bytes.map(x => x.toString(16).padStart(2, 0));
         while (bytes.length < 3) bytes.push('  ');
-        parts.push(`\n${pc}: ${bytes.join(' ')} ${instr} ${mode}`);
+        parts.push(`\n ${frame}:${scanline}${pc}: ${bytes.join(' ')} ${instr} ${mode}`);
       },
       mem: (addr, romaddr, read, write) => {
         let a = (romaddr != null ? romaddr : addr).toString(16);
@@ -304,12 +348,23 @@ if(ww)ww(write == -1 ? value : write);
         if (read != null) parts.push(`  read ${a} -> $${read.toString(16)}`);
         if (write != null) parts.push(`  write ${a} <- $${write.toString(16)}`);
       },
-      scanline: (num) => {
-        if (num < 0) parts.push(`\nvblank frame ${frame}`);
-        if (num == 0) parts.push(`\nscanlines frame ${frame++}`);
+      scanline: (newScanline, newFrame) => {
+        if (newFrame != null) frame = newFrame.toString(16).padStart(4, 0);
+        scanline = newScanline < 0 ? '-1' : newScanline.toString(16).padStart(2, 0);
       },
-    }, blocks);
-    console.log(parts.join(''));
+      interrupt: (type) => {
+        const name = type == Debug.NMI ? 'NMI' : type == Debug.IRQ ? 'IRQ' : 'reset';
+        parts.push(`\ninterrupt: ${name}`);
+      }
+    }, start, end);
+    log(parts.join(''));
+  }
+
+  nextInstruction() {
+    const addr = this.nes.cpu.REG_PC + 1;
+    const op = this.nes.cpu.mem[addr];
+    return '           $' + addr.toString(16).padStart(5, 0) + ': ' +
+        formatInstruction(this.nes, op, addr, (a) => this.nes.cpu.mem[a]);
   }
 
   patchRom(addr, value) {
@@ -323,7 +378,34 @@ if(ww)ww(write == -1 ? value : write);
   watch() {
     return new Debug.Watch(this.nes);
   }
+}
 
+
+// Private-constructor marker class...
+class TracePosition {
+  constructor(size, resets, pos) {
+    this.size = size;
+    this.resets = resets;
+    this.pos = pos;
+  }
+
+  previous(count = 1) {
+    if (count < 1) return this;
+    count = Math.max(0, Math.min(2 * this.size, Math.floor(count - 1)));
+    let resets = this.resets;
+    let pos = (this.pos - 1) & ~0xff;
+    pos -= count * 0x100;
+    while (pos < 0) {
+      resets++;
+      pos += this.size;
+    }
+    return new TracePosition(this.size, resets, pos);
+  }
+
+  distance(that) {
+    if (!that) return Infinity;
+    return this.pos - that.pos + (this.size) * (this.resets - that.resets);
+  }
 }
 
 
@@ -585,7 +667,12 @@ Debug.MEM_WR   = 0b00100010;
 Debug.MEM_RW   = 0b00110010;
 // To pass as first arg or logOther
 Debug.SCANLINE = 0b00000011; // next argument is scanline number, 0..240
-Debug.VBLANK   = 0b00000111;
+Debug.VBLANK   = 0b00000111; // next two arguments is frame number (LSB first)
+Debug.IRQ      = 0b00001011;
+Debug.NMI      = 0b00001111;
+Debug.RESET    = 0b00010011;
+// Indicates that redundant frames have been elided
+Debug.ELIDED   = 0b00010111;
 
 const CPU = 1;
 const PAGED = 4;

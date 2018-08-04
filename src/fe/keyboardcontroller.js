@@ -30,6 +30,7 @@ export class KeyboardController {
 
     main.functions = main.functions || {};
     main.functions[80] = (main) => main.handlePauseResume(),  // P (Pause)
+    main.functions[70] = (main) => main.advanceFrame(),  // P (Pause)
     main.functions[81] = (main) => main.save(), // Q (Save)
     main.functions[87] = (main) => main.load(), // W (Load)
 

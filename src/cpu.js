@@ -153,6 +153,11 @@ CPU.prototype = {
     this.irqType = null;
   },
 
+  softReset() {
+    this.REG_PC = this.load16bit(0xfffc) - 1;
+    // TODO - this.requestIrq(2) ---> ?
+  },
+
   // Emulates a single CPU instruction, returns the number of cycles
   emulate: function() {
     var temp, temp2;
@@ -1190,6 +1195,7 @@ CPU.prototype = {
   },
 
   doNonMaskableInterrupt: function(status) {
+    this.nes.debug.logInterrupt(Debug.NMI);
     if ((this.nes.mmap.load(0x2000) & 128) !== 0) {
       // Check whether VBlank Interrupts are enabled
 
@@ -1206,12 +1212,14 @@ CPU.prototype = {
   },
 
   doResetInterrupt: function() {
+    this.nes.debug.logInterrupt(Debug.RESET);
     this.REG_PC_NEW =
       this.nes.mmap.load(0xfffc) | (this.nes.mmap.load(0xfffd) << 8);
     this.REG_PC_NEW--;
   },
 
   doIrq: function(status) {
+    this.nes.debug.logInterrupt(Debug.IRQ);
     this.REG_PC_NEW++;
     this.push((this.REG_PC_NEW >> 8) & 0xff);
     this.push(this.REG_PC_NEW & 0xff);

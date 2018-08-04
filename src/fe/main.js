@@ -4,6 +4,7 @@ import {Screen} from './screen.js';
 import {Speakers} from './speakers.js';
 import {KeyboardController} from './keyboardcontroller.js';
 import {FrameTimer} from './frametimer.js';
+import {Component, WatchPanel, WatchPage, Trace} from './debugger.js';
 
 const bufferLog = () => {}; console.log.bind(console);
 
@@ -32,7 +33,7 @@ class Main {
   constructor(screen) {
     this.state = {
       running: false,
-      paused: false,
+      paused: true,
       loading: true,
       loadedPercent: 3,
     };
@@ -76,7 +77,13 @@ class Main {
 
     this.frameTimer = new FrameTimer({
       onGenerateFrame: this.nes.frame.bind(this.nes),
-      onWriteFrame: this.screen.writeBuffer.bind(this.screen),
+      onWriteFrame: () => {
+        this.screen.writeBuffer();
+        for (const el of document.querySelectorAll('#grid > .component')) {
+          const component = Component.map.get(el);
+          if (component) component.frame();
+        }
+      },
     });
 
     this.keyboardController = new KeyboardController(this);
@@ -134,6 +141,7 @@ class Main {
   }
 
   start() {
+    if (!this.state.paused) return;
     this.state.paused = false;
     this.frameTimer.start();
     this.speakers.start();
@@ -143,10 +151,19 @@ class Main {
   }
 
   stop() {
+    if (this.state.paused) return;
     this.state.paused = true;
     this.frameTimer.stop();
     this.speakers.stop();
     clearInterval(this.fpsInterval);
+    let trace;
+    for (const el of document.querySelectorAll('#grid > .component')) {
+      // for now, just auto-create the Trace component if it's not there.
+      const component = Component.map.get(el);
+      if (component instanceof Trace) trace = component;
+      if (component) component.step();
+    }
+    if (!trace) new Trace(this.nes, () => this.start()).step();
   }
 
   handlePauseResume() {
@@ -155,6 +172,11 @@ class Main {
     } else {
       this.stop();
     }
+  }
+
+  advanceFrame() {
+    this.nes.debug.breakAtVBlank = true;
+    this.start();
   }
 
   // layout() {
@@ -186,52 +208,14 @@ main.track = (type) => {
   main.functions[86] = () => console.log(nes.debug.coverage.candidates(type)); // V (List)
 };
 
-main.watch = (...addrs) => {
-  // TODO - display options? ascii? 16-bit?
-  const d = document.getElementById('debug');
-  const w = document.createElement('div');
-  d.appendChild(w);
-  w.classList.add('watch');
-  const close = document.createElement('span');
-  close.classList.add('close');
-  w.appendChild(close);
-  const map = {};
-  for (let addr of addrs) {
-    if (addr instanceof Array && addr.length == 1) addr = addr[0];
-    if (!(addr instanceof Array)) addr = [addr, addr];
-    for (let a = addr[0]; a <= addr[1]; a++) {
-      const label = document.createElement('span');
-      label.textContent = '   $' + a.toString(16).padStart(4, 0) + ': ';
-      label.classList.add('label');
-      w.appendChild(label);
-      const value = document.createElement('span');
-      map[a] = value;
-      value.classList.add('value');
-      w.appendChild(value);
-    }
+const deepMap = (x, f) => {
+  if (typeof x[Symbol.iterator] == 'function') {
+    return Array.from(x, y => deepMap(y, f));
+  } else {
+    return f(x);
   }
-  let timeout = () => {
-    setTimeout(() => {
-      for (let addr in map) {
-        addr = Number(addr);
-        const newText = '$' + nes.cpu.mem[addr].toString(16).padStart(2, 0);
-        const el = map[addr];
-        if (el.textContent != newText) {
-          el.style.color = '#ff0000';
-          el.textContent = newText;
-          el.dataset['red'] = 255;
-        } else {
-          const red = Math.max(0, el.dataset['red'] -= 2);
-          el.style.color = `#${red.toString(16).padStart(2,0)}0000`;
-        }
-      }
-      timeout();
-    }, 30);
-  };  
-  close.textContent = 'x';
-  close.addEventListener('click', () => {
-    timeout = () => {};
-    w.remove();
-  });
-  timeout();
 };
+
+main.watch = (...addrs) => new WatchPanel(nes, ...addrs);
+
+main.watchPage = (page) => deepMap(page, p => new WatchPage(nes, p));

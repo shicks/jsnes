@@ -59,12 +59,13 @@ export function NES(opts) {
   // for logging, etc
   this.debug = new Debug(this);
   this.breakpointCycles = null;
+
+  this.fpsFrameCount = 0;
+  this.frameCount = 0;
+  this.romData = null;
 }
 
 NES.prototype = {
-  fpsFrameCount: 0,
-  romData: null,
-
   // Resets the system
   reset: function() {
     if (this.mmap) this.mmap.reset();
@@ -75,6 +76,7 @@ NES.prototype = {
 
     this.lastFpsTime = null;
     this.fpsFrameCount = 0;
+    this.frameCount = 0;
   },
 
   frame: function() {
@@ -142,11 +144,12 @@ NES.prototype = {
         if (ppu.curX === 341) {
           ppu.curX = 0;
           ppu.endScanline();
-          this.debug.logScanline(ppu.scanline);
+          this.debug.logScanline(ppu.scanline, this.frameCount);
         }
       }
     }
     this.fpsFrameCount++;
+    this.frameCount++;
   },
 
   buttonDown: function(controller, button) {
@@ -206,9 +209,10 @@ NES.prototype = {
   },
 
   setFramerate: function(rate) {
+    // NOTE: this doesn't seem to work
     this.opts.preferredFrameRate = rate;
     this.frameTime = 1000 / rate;
-    this.papu.setSampleRate(this.opts.sampleRate, false);
+    // this.papu.setSampleRate(this.opts.sampleRate, false);
   },
 
   toJSON: function() {

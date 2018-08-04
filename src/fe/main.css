@@ -1,13 +1,94 @@
+#grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  align-content: flex-start;
+}
+
 #screen {
   /* image-rendering: pixelated; /* webkit */
   image-rendering: optimizespeed; /* firefox */
-  display: inline-block;
+}
+
+.component {
+  border: 1px solid black;
+  display: flex;
+  flex-direction: column;
+  margin: 3px;
+ /* padding: 1em;*/
+}
+
+.corner {
+/*
+  position: fixed;
+  top: 2px;
+  right: 0px;
+  left: 0px;
+  height: 10px;
+  z-index: 100;
+*/
+  font-family: monospace;
+  font-size: 83%;
+  display: flex;
+  flex-direction: row-reverse;
+  border-bottom: 1px solid black;
+  margin: 0;
+  padding: 0;
+}
+
+.corner div {
+  cursor: pointer;
+  margin: 0 0.5em;
+}
+
+.corner+div {
+  padding: 1em;
+}
+
+.component .trace {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.trace :last-child {
+  height: 1em;
+  color: #888;
+  border-top: 1px solid #aaa;
 }
 
 .watch {
+  font-size: 83%;
   white-space: pre;
   font-family: monospace;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  align-content: flex-start;
+}
+.watch .group+.group {
+  margin-left: 2em;
 }
 .watch .value {
   font-weight: bold;
+}
+
+.watchpage {
+  font-size: 83%;
+  white-space: pre;
+  font-family: monospace;
+}
+
+.watchpage+.watchpage {
+  margin-left: 2em;
+}
+
+.trace {
+  font-size: 83%;
+  white-space: pre;
+  font-family: monospace;
+  /* TODO(sdh): dragger in bottom-right corner to resize? could be useful for vertical flow */
+  width: 400px;
+  height: 320px;
+  overflow: auto;
 }
