@@ -31,7 +31,6 @@ export class Component {
     const button = child(this.corner, 'div');
     button.textContent = text;
     button.addEventListener('click', handler);
-   
   }
 
   remove() { this.element.remove(); }
@@ -198,15 +197,18 @@ export class Trace extends Component {
 
   step() {
     // update the log on a step
-    const next = this.nes.debug.tracePosition();
-    if (next.distance(this.current) > 0x4000) {
-      this.clear();
-      this.size = 1;
-      this.current = this.top = next.previous(2);
-    }
     const result = [];
-    this.nes.debug.trace(this.current, next, (s) => result.push(s));
-    this.current = next;
+    let previous = this.current;
+    if (this.current == null || this.current.distance(previous) > 0x4000) {
+      this.clear();
+      this.size = 0x100;
+      this.top = null;
+      previous = this.size;
+    }
+    this.current = this.nes.debug.tracePosition();
+    const top = this.nes.debug.trace(this.current, previous, (s) => result.push(s));
+    if (!this.top) this.top = top;
+
     const scroll = this.element.scrollTop;
     this.next.scrollIntoView();
     let shouldScroll = true;
@@ -221,10 +223,8 @@ export class Trace extends Component {
 
   back() {
     if (this.current == null) this.step();
-    const prev = this.top.previous(this.size);
     const result = [];
-    this.nes.debug.trace(prev, this.top, (s) => result.push(s));
-    this.top = prev;
+    this.top = this.nes.debug.trace(this.top, this.size, (s) => result.push(s));
     this.size *= 2;
     const text = document.createTextNode(result.join('\n'));
     this.trace.insertBefore(text, this.trace.firstChild);

@@ -63,6 +63,10 @@
 // could just keep the cpu logs but annotate indirect reads for addr mode?
 //  - esp because they may come before the actual cpu log?
 
+// UPDATE - change how we store the log - just go backwards.  This means we require
+// a correct key to work back further, but we generally have that... So now we put
+// the selector at the END of the log entry.
+
 
 //const BYTES_BY_MODE = [2, 2, 1, 3, 1, 2, 2, 2, 3, 3, 2, 3, 3];
 
@@ -72,7 +76,6 @@ export class Debug {
     this.nes = nes;
     // trace buffer
     this.buffer = new Uint8Array(size);
-    this.size = size;
     this.pos = 0;
     this.resets = 0;
     this.waits = {};
@@ -122,20 +125,20 @@ export class Debug {
     const addr =
         bank != null ? (bank << 13) | (pc & 0x1fff) : pc < 0x2000 ? pc & 0x7ff : pc;
     this.coverage.cov[addr] |= (bank != null ? BREAK_PRG_X : BREAK_RAM_X);
-if(this.watches && addr in this.watches){
-const watch = this.watches[addr][bank != null ? BREAK_PRG_X : BREAK_RAM_X];
-if(watch)watch();
-}
-//if(bank==0x1e&&(pc&0x1ffd)==0x900)return; // blackbox
+    if(this.watches && addr in this.watches){
+      const watch = this.watches[addr][bank != null ? BREAK_PRG_X : BREAK_RAM_X];
+      if (watch) watch();
+    }
     const len = 4 + (bank != null)
-    // pad up to the next block if necessary
-    while ((this.pos + len ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
-    if (this.pos == this.size) {this.resets++; this.pos = 0;}
-    this.buffer[this.pos++] = 1 | (bank != null ? PAGED : 0);
-    this.buffer[this.pos++] = opcode;
-    this.buffer[this.pos++] = pc;
-    this.buffer[this.pos++] = pc >>> 8;
+    // pad up to the next reset if necessary
+    while (this.pos + len >= this.buffer.length) this.buffer[this.pos++] = 0;
+    if (this.pos == this.buffer.length) { this.resets++; this.pos = 0; }
+    
     if (bank != null) this.buffer[this.pos++] = bank;
+    this.buffer[this.pos++] = pc >>> 8;
+    this.buffer[this.pos++] = pc;
+    this.buffer[this.pos++] = opcode;
+    this.buffer[this.pos++] = 1 | (bank != null ? PAGED : 0);
 
     if (this.breakpoints) {
       if ((this.breakpoints[addr] & (bank != null ? BREAK_PRG_X : BREAK_RAM_X))
@@ -161,29 +164,32 @@ if(watch)watch();
     this.coverage.cov[addr] |= (bank != null ? BREAK_PRG_R :
                                 (op & MEM_READ ? BREAK_RAM_R : 0) |
                                 (op & MEM_WRITE ? BREAK_RAM_W : 0));
-if(this.watches && addr in this.watches){
-const w = this.watches[addr];
-const wr = bank != null ? w[BREAK_PRG_R] : op & MEM_READ ? w[BREAK_RAM_R] : null;
-const ww = op & MEM_WRITE ? w[BREAK_RAM_W] : null;
-if(wr)wr(value);
-if(ww)ww(write == -1 ? value : write);
-}
-//if(bank==null&&address==9)return; // blackbox
+
+    if (this.watches && addr in this.watches) {
+      const w = this.watches[addr];
+      const wr = bank != null ? w[BREAK_PRG_R] : op & MEM_READ ? w[BREAK_RAM_R] : null;
+      const ww = op & MEM_WRITE ? w[BREAK_RAM_W] : null;
+      if (wr) wr(value);
+      if (ww) ww(write == -1 ? value : write);
+    }
+
     if (bank != null) op |= PAGED;
     const len = LEN_BY_OP[op];
     if (len == 0) {
       console.log('Bad memory log: ' + op + ' at ' + address.toString(16));
       return;
     }
-    while ((this.pos + len ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
-    if (this.pos == this.size) {this.resets++; this.pos = 0;}
-    this.buffer[this.pos++] = op;
-    this.buffer[this.pos++] = address;
-    this.buffer[this.pos++] = address >>> 8;
-    if (op & PAGED) this.buffer[this.pos++] = bank;
-    this.buffer[this.pos++] = value;
-    if (op & MEM_WORD) this.buffer[this.pos++] = value >>> 8;
+
+    while (this.pos + len >= this.buffer.length) this.buffer[this.pos++] = 0;
+    if (this.pos == this.buffer.length) {this.resets++; this.pos = 0;}
+
     if (write >= 0) this.buffer[this.pos++] = write;
+    if (op & MEM_WORD) this.buffer[this.pos++] = value >>> 8;
+    this.buffer[this.pos++] = value;
+    if (op & PAGED) this.buffer[this.pos++] = bank;
+    this.buffer[this.pos++] = address >>> 8;
+    this.buffer[this.pos++] = address;
+    this.buffer[this.pos++] = op;
 
     if (this.breakpoints) {
       const mask = bank != null ? BREAK_PRG_R : (op >> 4) & 3;
@@ -210,19 +216,19 @@ if(ww)ww(write == -1 ? value : write);
   logScanline(line, frame) {
     if (line == 0) { // start vblank
       while ((this.pos + 3 ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
-      if (this.pos == this.size) {this.resets++; this.pos = 0;}
-      this.buffer[this.pos++] = Debug.VBLANK;
-      this.buffer[this.pos++] = frame;
+      if (this.pos == this.buffer.length) {this.resets++; this.pos = 0;}
       this.buffer[this.pos++] = frame >> 8;
+      this.buffer[this.pos++] = frame;
+      this.buffer[this.pos++] = Debug.VBLANK;
       if (this.breakAtVBlank) {
         this.break = true;
         this.breakAtVBlank = false;
       }
     } else if (line > 20) {
       while ((this.pos + 2 ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
-      if (this.pos == this.size) {this.resets++; this.pos = 0;}
-      this.buffer[this.pos++] = Debug.SCANLINE;
+      if (this.pos == this.buffer.length) {this.resets++; this.pos = 0;}
       this.buffer[this.pos++] = line - 21;
+      this.buffer[this.pos++] = Debug.SCANLINE;
     }
   }
 
@@ -233,7 +239,7 @@ if(ww)ww(write == -1 ? value : write);
   }
 
   // logOther(op) {
-  //   if (this.pos == this.size) {console.log('reset log'); this.pos = 0;}
+  //   if (this.pos == this.buffer.length) {console.log('reset log'); this.pos = 0;}
   //   this.buffer[this.pos++] = op;
   // }
 
@@ -241,81 +247,104 @@ if(ww)ww(write == -1 ? value : write);
    * Returns a valid TracePosition.  If an argument is given, clamps it to the
    * available range.  Otherwise returns the current position.
    */
-  tracePosition(arg = undefined) {
-    if (!arg) return new TracePosition(this.size, this.resets, this.pos);
-    if (arg.resets == this.resets) return arg;
-    return new TracePosition(
-        this.size,
-        this.resets - 1,
-        Math.max((this.pos + 0x100) & ~0xff, arg.pos));
+  tracePosition() {
+    return new TracePosition(this, this.resets, this.pos);
   }
 
   /**
+   * Iterates in forward order anyway.
    * @param {function(opcode, pc, pcrom)=} cpu
    * @param {function(addr, addrrom, read?, written?)=} mem
    * @param {function(num)=} scanline
    * @param {!TracePosition=} start
-   * @param {!TracePosition=} end
+   * @param {!TracePosition|number=} count
+   * @return {!TracePosition} Position at end.
    */
-  visitLog({cpu, mem, scanline} = {}, start = undefined, end = undefined) {
-    end = this.tracePosition(end instanceof TracePosition ? end : end || 0);
-    start =
-        this.tracePosition(
-            start instanceof TracePosition ? start : end.previous(start || 10));
-    let pos = start.pos;
-    let resets = start.resets;
-
-    while (resets < end.resets || pos < end.pos) {
-      if (pos == this.size) {
-        pos = 0;
-        resets++;
+  visitLog({cpu, mem, scanline} = {}, end = undefined, start = 0x1000) {
+    if (!end) end = this.tracePosition();
+    if (!end.isValid()) return end;
+    if (!(start instanceof TracePosition)) {
+      let pos = end.pos - start;
+      let resets = end.resets;
+      if (pos < 0) {
+        resets--;
+        pos = Math.max(pos + this.debug.buffer.length, this.debug.pos + 1);
       }
-      const selector = this.buffer[pos++];
+      start = new TracePosition(this.debug, resets, pos, null, null);
+    }
+    let pos = end.pos;
+    let resets = end.resets;
+    let currentFrame = end.frame;
+    let currentScanline = end.scanline;
+
+    const entries = [];
+
+    for (;;) {
+      if (pos <= 0) {
+        pos += this.buffer.length;
+        resets--;
+      }
+      const selector = this.buffer[--pos];
+      if (!selector) continue;
+      const len = selectorLength(selector);
+      if (resets < start.resets || resets == start.resets && pos - len < start.pos) break;
+      entries.push(pos + 1);
+      // special case for scanline frame
+      if (selector == Debug.VBLANK) {
+        currentFrame = this.buffer[pos - 1] + (this.buffer[pos - 2] << 8) - 1;
+        currentScanline = 240;
+      } else if (selector == Debug.SCANLINE) {
+        currentScanline = this.buffer[pos - 1] - 1;
+      }
+      pos -= len - 1;
+    }
+    scanline && scanline(currentScanline, currentFrame);
+    for (let i = entries.length - 1; i >= 0; i--) {
+      let pos = entries[i];
+      const selector = this.buffer[--pos];
       switch (selector & 3) {
-      case 0: // skip
-        continue;
       case 1: { // cpu
-        const op = this.buffer[pos++];
-        const addr = this.buffer[pos++] | (this.buffer[pos++] << 8);
+        const op = this.buffer[--pos];
+        const addr = this.buffer[--pos] | (this.buffer[--pos] << 8);
         const romaddr =
-            selector & PAGED ? (addr & 0x1fff) | (this.buffer[pos++] << 13) : null;
+            selector & PAGED ? (addr & 0x1fff) | (this.buffer[--pos] << 13) : null;
         cpu && cpu(op, addr, romaddr);
         break;
       }
       case 2: { // mem
-        const addr = this.buffer[pos++] | (this.buffer[pos++] << 8);
+        const addr = this.buffer[--pos] | (this.buffer[--pos] << 8);
         const romaddr =
-            selector & PAGED ? (addr & 0x1fff) | (this.buffer[pos++] << 13) : null;
+            selector & PAGED ? (addr & 0x1fff) | (this.buffer[--pos] << 13) : null;
         const read =
             selector & MEM_READ ?
-                this.buffer[pos++] |
-                    (selector & MEM_WORD ? this.buffer[pos++] << 8 : 0) :
+                this.buffer[--pos] |
+                    (selector & MEM_WORD ? this.buffer[--pos] << 8 : 0) :
                 undefined;
-        const write = selector & MEM_WRITE ? this.buffer[pos++] : undefined;
+        const write = selector & MEM_WRITE ? this.buffer[--pos] : undefined;
         mem && mem(addr, romaddr, read, write);
         break;
       }
       case 3: { // other
         if (selector == Debug.VBLANK) {
-          const frame = this.buffer[pos++] | (this.buffer[pos++] << 8);
+          const frame = this.buffer[--pos] | (this.buffer[--pos] << 8);
           scanline && scanline(-1, frame);
         } else if (selector == Debug.SCANLINE) {
-          scanline && scanline(this.buffer[pos++]);
+          scanline && scanline(this.buffer[--pos]);
         }
         break;
       }
       default:
       }
     }
+    return new TracePosition(this, resets, pos, currentFrame, currentScanline);
   }
 
-  trace(start = undefined, end = undefined, log = console.log) {
-    end = end instanceof TracePosition ? end : tracePosition().previous(end || 0);
-    start = start instanceof TracePosition ? start : end.previous(start || 10);
+  /** @return {!TracePosition} */
+  trace(end = undefined, start = undefined, log = console.log) {
     const parts = [];
     let frame = '????';
     let scanline = '??';
-    this.visitLog({
+    const result = this.visitLog({
       cpu: (op, addr, romaddr) => {
         // TODO - rewrite this to call formatInstruction
         const opmeta = this.nes.cpu.opmeta;
@@ -349,6 +378,9 @@ if(ww)ww(write == -1 ? value : write);
         if (write != null) parts.push(`  write ${a} <- $${write.toString(16)}`);
       },
       scanline: (newScanline, newFrame) => {
+        if (newScanline == null) {
+          return;
+        }
         if (newFrame != null) frame = newFrame.toString(16).padStart(4, 0);
         scanline = newScanline < 0 ? '-1' : newScanline.toString(16).padStart(2, 0);
       },
@@ -356,8 +388,9 @@ if(ww)ww(write == -1 ? value : write);
         const name = type == Debug.NMI ? 'NMI' : type == Debug.IRQ ? 'IRQ' : 'reset';
         parts.push(`\ninterrupt: ${name}`);
       }
-    }, start, end);
+    }, end, start);
     log(parts.join(''));
+    return result;
   }
 
   nextInstruction() {
@@ -383,28 +416,22 @@ if(ww)ww(write == -1 ? value : write);
 
 // Private-constructor marker class...
 class TracePosition {
-  constructor(size, resets, pos) {
-    this.size = size;
+  constructor(debug, resets, pos, frame, scanline) {
+    this.debug = debug;
     this.resets = resets;
     this.pos = pos;
-  }
-
-  previous(count = 1) {
-    if (count < 1) return this;
-    count = Math.max(0, Math.min(2 * this.size, Math.floor(count - 1)));
-    let resets = this.resets;
-    let pos = (this.pos - 1) & ~0xff;
-    pos -= count * 0x100;
-    while (pos < 0) {
-      resets++;
-      pos += this.size;
-    }
-    return new TracePosition(this.size, resets, pos);
+    this.frame = frame;
+    this.scanline = scanline;
   }
 
   distance(that) {
     if (!that) return Infinity;
     return this.pos - that.pos + (this.size) * (this.resets - that.resets);
+  }
+
+  isValid() {
+    return this.resets == this.debug.resets ||
+        this.resets == this.debug.resets - 1 && this.pos > this.debug.pos;
   }
 }
 
@@ -644,6 +671,27 @@ Debug.WatchOld = class {
     setTimeout(() => this.check(watching), 30);
   }
 }
+
+
+const selectorLength = (selector) => {
+  switch (selector & 3) {
+  case 1: // cpu
+    return 4 + !!(selector & PAGED);
+  case 2: // mem
+    return 3 +
+        !!(selector & PAGED) +
+        !!(selector & MEM_READ) +
+        !!(selector & MEM_WORD) +
+        !!(selector & MEM_WRITE);
+  case 3: // other
+    switch (selector) {
+      case Debug.VBLANK:   return 3;
+      case Debug.SCANLINE: return 2;
+      default:             return 1;
+    }
+  }
+  return 1;
+};
 
 
 const BREAK_RAM_R = 1;
