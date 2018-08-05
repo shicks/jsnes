@@ -25,3 +25,33 @@ export function toJSON(obj) {
 export function hex(pad, num) {
   return '$' + num.toString(16).padStart(pad, 0);
 }
+
+export class TrieSet {
+  constructor() {
+    this.contained = false;
+    this.data = new Map();
+  }
+
+  add(keys) {
+    let trie = this;
+    for (let i = 0; i < keys.length; i++) {
+      let next = trie.data.get(keys[i]);
+      if (next == null) trie.data.set(keys[i], next = new TrieSet());
+      trie = next;
+    }
+    return trie.contained;
+  }
+
+  // return undefined or a trie - stop if the trie has([])
+  next(key) {
+    return this.data.get(key);
+  }
+
+  has(keys) {
+    let trie = this;
+    for (let i = 0; trie && i < keys.length; i++) {
+      trie = trie.data.get(keys[i]);
+    }
+    return trie != null && trie.contained;
+  }
+}

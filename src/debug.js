@@ -1,3 +1,5 @@
+import {TrieSet} from './utils.js';
+
 // TODO - more pluggable debug framework
 //  - provide a few hooks via properties on nes:
 //    * logCpu, logMem, logPpu, logBank, ...
@@ -78,8 +80,8 @@ export class Debug {
     this.buffer = new Uint8Array(size);
     this.pos = 0;
     this.resets = 0;
-    this.waits = {};
-    this.waiting = false;
+    this.waits = new TrieSet();
+    this.waiting = null;
     // ---
     this.watches = {}; // {[addr]: {[break_#]: function()}}
     this.breakpoints = new Uint8Array(0x10000);
@@ -121,6 +123,34 @@ export class Debug {
   }
 
   logCpu(opcode, pc) {
+    // Check if we're waiting for an interrupt
+    if (this.waiting) return; // TODO - break out of "waiting" if the pattern breaks
+    let pos = this.pos;
+    let waits = this.waits;
+    let remaining = 0;
+if (pc == 0xc900) debugger;
+    while (waits) {
+      if (waits.contained) {
+        this.waiting = true; // TODO - store more information, like the next thing to skip?
+debugger;
+        return;
+      } else if (pos <= 0) {
+        pos += this.buffer.size;
+      }
+      if (remaining--) {
+        waits = waits.data.get(this.buffer[--pos]);
+        continue;
+      }
+      const selector = this.buffer[--pos];
+      if ((selector & 3) == 0 || (selector & 3) == 3) {
+        pos -= (selectorLength(selector) - 1);
+        continue;
+      }
+      waits = waits.data.get(selector);
+      remaining = selectorLength(selector) - 1;
+    }
+
+    // If we've gotten to this point then we're not ignoring anything.
     const bank = this.nes.banks[pc >>> 13];
     const addr =
         bank != null ? (bank << 13) | (pc & 0x1fff) : pc < 0x2000 ? pc & 0x7ff : pc;
@@ -157,6 +187,7 @@ export class Debug {
   }
 
   logMem(op, address, value, write = -1) {
+    if (this.waiting) return;
     const bank = op & MEM_READ ? this.nes.banks[address >>> 13] : null;
     const addr =
         bank != null ? (bank << 13) | (address & 0x1fff) :
@@ -181,7 +212,7 @@ export class Debug {
     }
 
     while (this.pos + len >= this.buffer.length) this.buffer[this.pos++] = 0;
-    if (this.pos == this.buffer.length) {this.resets++; this.pos = 0;}
+    if (this.pos == this.buffer.length) { this.resets++; this.pos = 0; }
 
     if (write >= 0) this.buffer[this.pos++] = write;
     if (op & MEM_WORD) this.buffer[this.pos++] = value >>> 8;
@@ -205,18 +236,13 @@ export class Debug {
         this.break = true;
       }
     }
-
-
-// if(address == 0x3c1 && (op & MEM_WRITE)) {
-// this.break = true;
-// console.log(`break on write ${address} <- ${value}`);
-// }
   }
 
   logScanline(line, frame) {
     if (line == 0) { // start vblank
-      while ((this.pos + 3 ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
-      if (this.pos == this.buffer.length) {this.resets++; this.pos = 0;}
+      const len = 3;
+      while (this.pos + len >= this.buffer.length) this.buffer[this.pos++] = 0;
+      if (this.pos == this.buffer.length) { this.resets++; this.pos = 0; }
       this.buffer[this.pos++] = frame >> 8;
       this.buffer[this.pos++] = frame;
       this.buffer[this.pos++] = Debug.VBLANK;
@@ -225,23 +251,73 @@ export class Debug {
         this.breakAtVBlank = false;
       }
     } else if (line > 20) {
-      while ((this.pos + 2 ^ this.pos) & 0x100) this.buffer[this.pos++] = 0;
-      if (this.pos == this.buffer.length) {this.resets++; this.pos = 0;}
+      const len = 2;
+      while (this.pos + len >= this.buffer.length) this.buffer[this.pos++] = 0;
+      if (this.pos == this.buffer.length) { this.resets++; this.pos = 0; }
       this.buffer[this.pos++] = line - 21;
       this.buffer[this.pos++] = Debug.SCANLINE;
     }
   }
 
   logInterrupt(type) {
-    // TODO - look for patterns of repeated CPU configurations to elide in the future
-    // Then just log the interrupt.
-    // Trick: we want to filter out scanline entries.
-  }
+    // Log first, it will be ignored later.
+    while (this.pos + 1 >= this.buffer.length) this.buffer[this.pos++] = 0;
+    if (this.pos == this.buffer.length) { this.resets++; this.pos = 0; }
+    this.buffer[this.pos++] = Debug.SCANLINE;
 
-  // logOther(op) {
-  //   if (this.pos == this.buffer.length) {console.log('reset log'); this.pos = 0;}
-  //   this.buffer[this.pos++] = op;
-  // }
+    // When an interrupt happens, it's likely that we were in the middle of a
+    // holding pattern.  If we hadn't already identified it, see if we can now.
+    if (this.waiting) {
+      this.waiting = null;
+      return;
+    }
+
+    // Fill up 64 bytes.
+    const log = [];
+    const selectors = [];
+    let pos = this.pos;
+    let resets = this.resets;
+    while (log.length < 64) {
+      if (pos <= 0) {
+        pos += this.buffer.length;
+        resets--;
+        if (resets < 0) break;
+      }
+      const selector = this.buffer[--pos];
+      selectors.push(log.length);
+      let len = selectorLength(selector) - 1;
+      if ((selector & 3) == 0 || (selector & 3) == 3) {
+        pos -= len;
+        continue;
+      }
+      // Copy into the log.
+      log.push(selector);
+      while (len--) {
+        log.push(this.buffer[--pos]);
+      }
+    }
+    // Now we've filled up our log - look for a cycle at least 16 elements long.
+    // If there's a shorter cycle, it should still show up as a doubled cycle,
+    // which is fine.
+    const candidates = [];
+    for (const selector of selectors) {
+      if (selector < 16) continue;
+      if (selector >= 32) break;
+      if (log[0] == log[selector]) candidates.push(selector);
+    }
+    CANDIDATE:
+    for (let candidate of candidates) {
+      for (let i = 0; i < candidate; i++) {
+        if (log[i] != log[i + candidate]) continue CANDIDATE;
+      }
+      // We've found a cycle - so record it!
+      console.log(`Found a cycle: ${log.slice(0, candidate)}`);
+      // TODO - see if we can chop it down a bit?
+      for (const selector of selectors) {
+        this.waits.add(log.slice(selector, selector + candidate));
+      }
+    }
+  }
 
   /**
    * Returns a valid TracePosition.  If an argument is given, clamps it to the
@@ -255,12 +331,13 @@ export class Debug {
    * Iterates in forward order anyway.
    * @param {function(opcode, pc, pcrom)=} cpu
    * @param {function(addr, addrrom, read?, written?)=} mem
-   * @param {function(num)=} scanline
+   * @param {function(num, num)=} scanline
+   * @param {function(num)=} interrupt
    * @param {!TracePosition=} start
    * @param {!TracePosition|number=} count
    * @return {!TracePosition} Position at end.
    */
-  visitLog({cpu, mem, scanline} = {}, end = undefined, start = 0x1000) {
+  visitLog({cpu, mem, scanline, interrupt} = {}, end = undefined, start = 0x1000) {
     if (!end) end = this.tracePosition();
     if (!end.isValid()) return end;
     if (!(start instanceof TracePosition)) {
@@ -325,11 +402,19 @@ export class Debug {
         break;
       }
       case 3: { // other
-        if (selector == Debug.VBLANK) {
+        switch (selector) {
+        case Debug.VBLANK:
           const frame = this.buffer[--pos] | (this.buffer[--pos] << 8);
           scanline && scanline(-1, frame);
-        } else if (selector == Debug.SCANLINE) {
+          break;
+        case Debug.SCANLINE:
           scanline && scanline(this.buffer[--pos]);
+          break;
+        case Debug.DEBUG_IRQ:
+        case Debug.DEBUG_NMI:
+        case Debug.DEBUG_RESET:
+          interrupt && interrupt(selector);
+          break;
         }
         break;
       }
