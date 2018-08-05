@@ -51,12 +51,6 @@
   flex-direction: column;
 }
 
-.trace :last-child {
-  height: 1em;
-  color: #888;
-  border-top: 1px solid #aaa;
-}
-
 .watch {
   font-size: 83%;
   white-space: pre;
@@ -91,4 +85,15 @@
   width: 400px;
   height: 320px;
   overflow: auto;
+}
+
+.trace :first-child {
+  flex: 0px 1 1;
+  border-bottom: 1px solid #aaa;
+}
+
+.trace :last-child {
+  flex: 1.2em 0 0;
+  height: 1em;
+  color: #888;
 }

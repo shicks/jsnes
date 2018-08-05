@@ -179,8 +179,12 @@ export class Trace extends Component {
     this.current = null;
   }
 
-  clear() {
+  clearDom() {
     while (this.trace.firstChild) this.trace.firstChild.remove();
+  }
+
+  clear() {
+    this.clearDom();
     this.size = 0; // doubling
     this.top = null;
     this.current = null;
@@ -199,13 +203,13 @@ export class Trace extends Component {
     // update the log on a step
     const result = [];
     let previous = this.current;
-    if (this.current == null || this.current.distance(previous) > 0x4000) {
-      this.clear();
-      this.size = 0x100;
+    this.current = this.nes.debug.tracePosition();
+    if (this.current.distance(previous) > 0x4000) {
+      this.clearDom();
+      this.size = 0x400;
       this.top = null;
       previous = this.size;
     }
-    this.current = this.nes.debug.tracePosition();
     const top = this.nes.debug.trace(this.current, previous, (s) => result.push(s));
     if (!this.top) this.top = top;
 

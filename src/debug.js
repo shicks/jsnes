@@ -80,9 +80,8 @@ export class Debug {
     this.buffer = new Uint8Array(size);
     this.pos = 0;
     this.resets = 0;
-    this.waits = new TrieSet();
-    this.waiting = null;
     // ---
+    this.holding = new HoldingPatternTracker(this);
     this.watches = {}; // {[addr]: {[break_#]: function()}}
     this.breakpoints = new Uint8Array(0x10000);
     this.coverage = new Debug.Coverage(this.nes);
@@ -91,6 +90,8 @@ export class Debug {
     this.breakAtVBlank = false;
     this.break = false;
     this.mt = new Debug.MemTracker(this.nes);
+    this.frame = 0;
+    this.scanline = 0;
   }
 
   growBreakpoints_(addr) {
@@ -122,38 +123,29 @@ export class Debug {
     }
   }
 
+  resetTrace() {
+    while (this.pos < this.buffer.length) {
+      this.buffer[this.pos++] = 0;
+    }
+    this.resets++;
+    this.pos = 0;
+  }
+
   logCpu(opcode, pc) {
     // Check if we're waiting for an interrupt
-    if (this.waiting) return; // TODO - break out of "waiting" if the pattern breaks
-    let pos = this.pos;
-    let waits = this.waits;
-    let remaining = 0;
-if (pc == 0xc900) debugger;
-    while (waits) {
-      if (waits.contained) {
-        this.waiting = true; // TODO - store more information, like the next thing to skip?
-debugger;
-        return;
-      } else if (pos <= 0) {
-        pos += this.buffer.size;
-      }
-      if (remaining--) {
-        waits = waits.data.get(this.buffer[--pos]);
-        continue;
-      }
-      const selector = this.buffer[--pos];
-      if ((selector & 3) == 0 || (selector & 3) == 3) {
-        pos -= (selectorLength(selector) - 1);
-        continue;
-      }
-      waits = waits.data.get(selector);
-      remaining = selectorLength(selector) - 1;
-    }
+    // TODO - break out of "waiting" if the pattern breaks
+    if (this.holding.holding) return;
 
     // If we've gotten to this point then we're not ignoring anything.
     const bank = this.nes.banks[pc >>> 13];
     const addr =
         bank != null ? (bank << 13) | (pc & 0x1fff) : pc < 0x2000 ? pc & 0x7ff : pc;
+    // only check for backjumps in PRG.
+    if (bank != null && this.holding.check(addr)) {
+      this.buffer[this.pos++] = Debug.ELIDED;
+      return;
+    }
+
     this.coverage.cov[addr] |= (bank != null ? BREAK_PRG_X : BREAK_RAM_X);
     if(this.watches && addr in this.watches){
       const watch = this.watches[addr][bank != null ? BREAK_PRG_X : BREAK_RAM_X];
@@ -161,8 +153,7 @@ debugger;
     }
     const len = 4 + (bank != null)
     // pad up to the next reset if necessary
-    while (this.pos + len >= this.buffer.length) this.buffer[this.pos++] = 0;
-    if (this.pos == this.buffer.length) { this.resets++; this.pos = 0; }
+    if (this.pos + len >= this.buffer.length) this.resetTrace();
     
     if (bank != null) this.buffer[this.pos++] = bank;
     this.buffer[this.pos++] = pc >>> 8;
@@ -187,7 +178,7 @@ debugger;
   }
 
   logMem(op, address, value, write = -1) {
-    if (this.waiting) return;
+    if (this.holding.holding) return;
     const bank = op & MEM_READ ? this.nes.banks[address >>> 13] : null;
     const addr =
         bank != null ? (bank << 13) | (address & 0x1fff) :
@@ -211,8 +202,7 @@ debugger;
       return;
     }
 
-    while (this.pos + len >= this.buffer.length) this.buffer[this.pos++] = 0;
-    if (this.pos == this.buffer.length) { this.resets++; this.pos = 0; }
+    if (this.pos + len >= this.buffer.length) this.resetTrace();
 
     if (write >= 0) this.buffer[this.pos++] = write;
     if (op & MEM_WORD) this.buffer[this.pos++] = value >>> 8;
@@ -240,9 +230,9 @@ debugger;
 
   logScanline(line, frame) {
     if (line == 0) { // start vblank
-      const len = 3;
-      while (this.pos + len >= this.buffer.length) this.buffer[this.pos++] = 0;
-      if (this.pos == this.buffer.length) { this.resets++; this.pos = 0; }
+      if (this.pos + 3 >= this.buffer.length) this.resetTrace();
+      this.frame = frame & 0xffff;
+      this.scanline = -1;
       this.buffer[this.pos++] = frame >> 8;
       this.buffer[this.pos++] = frame;
       this.buffer[this.pos++] = Debug.VBLANK;
@@ -251,72 +241,27 @@ debugger;
         this.breakAtVBlank = false;
       }
     } else if (line > 20) {
-      const len = 2;
-      while (this.pos + len >= this.buffer.length) this.buffer[this.pos++] = 0;
-      if (this.pos == this.buffer.length) { this.resets++; this.pos = 0; }
-      this.buffer[this.pos++] = line - 21;
+      if (this.buffer[this.pos - 1] == Debug.SCANLINE &&
+          this.buffer[this.pos - 3] == Debug.SCANLINE) {
+        // Special case: while waiting for interrupt, don't just add empty "scanline"
+        // events everywhere.  Conservatively only elide events in between two others
+        this.buffer[this.pos - 2] = this.scanline = line - 21;
+        return;
+      }
+      if (this.pos + 3 >= this.buffer.length) this.resetTrace();
+      this.buffer[this.pos++] = this.scanline = line - 21;
       this.buffer[this.pos++] = Debug.SCANLINE;
     }
   }
 
   logInterrupt(type) {
     // Log first, it will be ignored later.
-    while (this.pos + 1 >= this.buffer.length) this.buffer[this.pos++] = 0;
-    if (this.pos == this.buffer.length) { this.resets++; this.pos = 0; }
-    this.buffer[this.pos++] = Debug.SCANLINE;
+    if (this.pos + 1 >= this.buffer.length) this.resetTrace();
+    this.buffer[this.pos++] = type;
 
     // When an interrupt happens, it's likely that we were in the middle of a
     // holding pattern.  If we hadn't already identified it, see if we can now.
-    if (this.waiting) {
-      this.waiting = null;
-      return;
-    }
-
-    // Fill up 64 bytes.
-    const log = [];
-    const selectors = [];
-    let pos = this.pos;
-    let resets = this.resets;
-    while (log.length < 64) {
-      if (pos <= 0) {
-        pos += this.buffer.length;
-        resets--;
-        if (resets < 0) break;
-      }
-      const selector = this.buffer[--pos];
-      selectors.push(log.length);
-      let len = selectorLength(selector) - 1;
-      if ((selector & 3) == 0 || (selector & 3) == 3) {
-        pos -= len;
-        continue;
-      }
-      // Copy into the log.
-      log.push(selector);
-      while (len--) {
-        log.push(this.buffer[--pos]);
-      }
-    }
-    // Now we've filled up our log - look for a cycle at least 16 elements long.
-    // If there's a shorter cycle, it should still show up as a doubled cycle,
-    // which is fine.
-    const candidates = [];
-    for (const selector of selectors) {
-      if (selector < 16) continue;
-      if (selector >= 32) break;
-      if (log[0] == log[selector]) candidates.push(selector);
-    }
-    CANDIDATE:
-    for (let candidate of candidates) {
-      for (let i = 0; i < candidate; i++) {
-        if (log[i] != log[i + candidate]) continue CANDIDATE;
-      }
-      // We've found a cycle - so record it!
-      console.log(`Found a cycle: ${log.slice(0, candidate)}`);
-      // TODO - see if we can chop it down a bit?
-      for (const selector of selectors) {
-        this.waits.add(log.slice(selector, selector + candidate));
-      }
-    }
+    this.holding.interrupt();
   }
 
   /**
@@ -324,7 +269,7 @@ debugger;
    * available range.  Otherwise returns the current position.
    */
   tracePosition() {
-    return new TracePosition(this, this.resets, this.pos);
+    return new TracePosition(this, this.resets, this.pos, this.frame, this.scanline);
   }
 
   /**
@@ -337,7 +282,7 @@ debugger;
    * @param {!TracePosition|number=} count
    * @return {!TracePosition} Position at end.
    */
-  visitLog({cpu, mem, scanline, interrupt} = {}, end = undefined, start = 0x1000) {
+  visitLog({cpu, mem, scanline, interrupt, elided} = {}, end = undefined, start = 0x400) {
     if (!end) end = this.tracePosition();
     if (!end.isValid()) return end;
     if (!(start instanceof TracePosition)) {
@@ -356,6 +301,7 @@ debugger;
 
     const entries = [];
 
+    // Work backwards, from most to least recent
     for (;;) {
       if (pos <= 0) {
         pos += this.buffer.length;
@@ -364,9 +310,9 @@ debugger;
       const selector = this.buffer[--pos];
       if (!selector) continue;
       const len = selectorLength(selector);
-      if (resets < start.resets || resets == start.resets && pos - len < start.pos) break;
+      if (resets < start.resets || resets == start.resets && pos - len + 1 < start.pos) break;
       entries.push(pos + 1);
-      // special case for scanline frame
+      // special case scanline frame so that we can know the start frame upfront
       if (selector == Debug.VBLANK) {
         currentFrame = this.buffer[pos - 1] + (this.buffer[pos - 2] << 8) - 1;
         currentScanline = 240;
@@ -376,6 +322,8 @@ debugger;
       pos -= len - 1;
     }
     scanline && scanline(currentScanline, currentFrame);
+
+    // Iterate backwards over entries, forward in time
     for (let i = entries.length - 1; i >= 0; i--) {
       let pos = entries[i];
       const selector = this.buffer[--pos];
@@ -410,10 +358,13 @@ debugger;
         case Debug.SCANLINE:
           scanline && scanline(this.buffer[--pos]);
           break;
-        case Debug.DEBUG_IRQ:
-        case Debug.DEBUG_NMI:
-        case Debug.DEBUG_RESET:
+        case Debug.IRQ:
+        case Debug.NMI:
+        case Debug.RESET:
           interrupt && interrupt(selector);
+          break;
+        case Debug.ELIDED:
+          elided && elided();
           break;
         }
         break;
@@ -443,6 +394,11 @@ debugger;
         if (romaddr != null) { // can't really look up RAM
           for (let i = 0; i < opmeta.addrSize[(opinf >> 8) & 0xff]; i++) {
             romaddr++;
+if(romaddr>0x3ffff){
+console.log('BAD!');
+debugger;
+return;
+}
             const a = this.nes.rom.rom[romaddr >> 14][romaddr & 0x3fff];
             bytes.push(a);
             arg += (a << factor);
@@ -471,8 +427,12 @@ debugger;
       },
       interrupt: (type) => {
         const name = type == Debug.NMI ? 'NMI' : type == Debug.IRQ ? 'IRQ' : 'reset';
-        parts.push(`\ninterrupt: ${name}`);
-      }
+        parts.push(`\n ${frame}:${scanline}   --- interrupt: ${name} ---\n`);
+        // Next entry will be the pops, so the newline helps.
+      },
+      elided: () => {
+        parts.push(`\n ${frame}:${scanline}   --- frames elided waiting for interrupt ---`);
+      },
     }, end, start);
     log(parts.join(''));
     return result;
@@ -495,6 +455,63 @@ debugger;
 
   watch() {
     return new Debug.Watch(this.nes);
+  }
+}
+
+
+class HoldingPatternTracker {
+  constructor(debug) {
+    this.debug = debug;
+    this.holdingPatterns = {};
+    // PC of last instruction
+    this.lastPc = 0;
+    // PC of last backward jump that was taken
+    this.lastBackjump = 0;
+    this.lastBackjumpPos = 0;
+    this.holding = false;
+  }
+
+  /**
+   * Returns true if we're in a known holding pattern.
+   * Otherwise stores the current PC and tracelog position for future analysis.
+   * We will only detect the pattern if the interrupt occurs immediately after
+   * a backjump.
+   */
+  check(pc) {
+    if (this.holding) return true;
+    if (pc > this.lastPc || pc < this.lastPc - 0x10) {
+      this.lastPc = pc;
+      return false;
+    }
+    // A backward jump has occurred - check if it's a known holding pattern.
+    if (this.lastPc == this.lastBackjump && this.holdingPatterns[this.lastPc]) {
+      this.holding = true;
+      return true;
+    }
+    // Keep track of this backjump.
+    this.lastBackjump = this.lastPc;
+    this.lastBackjumpPos = this.debug.pos;
+    this.lastPc = pc;
+    return false;
+  }
+
+  /** Analyzes the recent history to find a possible holding pattern. */
+  interrupt() {
+    if (this.holding) {
+      this.holding = false;
+      return;
+    }
+    // we will only find the pattern if the interrupt occurs immediately after a backjump
+    const pos = this.debug.pos;
+    const diff = pos - this.lastPos;
+    if (this.lastPc != this.lastBackjump || diff <= 0 || pos < 2 * diff) return;
+    const buf = this.debug.buffer;
+    // check for a cycle in the trace log
+    for (let i = 0; i < diff; i++) {
+      if (buf[pos - i] != buf[this.lastPos - i]) return;
+    }
+    console.log(`Found holding pattern backjump: $${this.lastPc.toString(16).padStart(5,0)}`);
+    this.holdingPatterns[this.lastPc] = true;
   }
 }
 
