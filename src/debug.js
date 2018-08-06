@@ -134,15 +134,16 @@ export class Debug {
   logCpu(opcode, pc) {
     // Check if we're waiting for an interrupt
     // TODO - break out of "waiting" if the pattern breaks
-    if (this.holding.holding) return;
+    //if (this.holding.holding) return;
 
     // If we've gotten to this point then we're not ignoring anything.
     const bank = this.nes.banks[pc >>> 13];
     const addr =
         bank != null ? (bank << 13) | (pc & 0x1fff) : pc < 0x2000 ? pc & 0x7ff : pc;
     // only check for backjumps in PRG.
+    let wasHolding = this.holding.holding;
     if (bank != null && this.holding.check(addr)) {
-      this.buffer[this.pos++] = Debug.ELIDED;
+      if (!wasHolding) this.buffer[this.pos++] = Debug.ELIDED;
       return;
     }
 
@@ -426,8 +427,8 @@ return;
         scanline = newScanline < 0 ? '-1' : newScanline.toString(16).padStart(2, 0);
       },
       interrupt: (type) => {
-        const name = type == Debug.NMI ? 'NMI' : type == Debug.IRQ ? 'IRQ' : 'reset';
-        parts.push(`\n ${frame}:${scanline}   --- interrupt: ${name} ---\n`);
+        const name = type == Debug.NMI ? '(NMI)' : type == Debug.IRQ ? '(IRQ)' : '(reset)';
+        parts.push(`\n ${frame}:${scanline}   INTERRUPT        ${name.padEnd(12)}`);
         // Next entry will be the pops, so the newline helps.
       },
       elided: () => {
@@ -467,8 +468,9 @@ class HoldingPatternTracker {
     this.lastPc = 0;
     // PC of last backward jump that was taken
     this.lastBackjump = 0;
-    this.lastBackjumpPos = 0;
-    this.holding = false;
+    this.pos1 = 0;
+    this.pos2 = 0;
+    this.holding = null;
   }
 
   /**
@@ -478,19 +480,21 @@ class HoldingPatternTracker {
    * a backjump.
    */
   check(pc) {
-    if (this.holding) return true;
+    if (this.holding && pc >= this.holding[0] && pc <= this.holding[1]) return true;
+    this.holding = null;
     if (pc > this.lastPc || pc < this.lastPc - 0x10) {
       this.lastPc = pc;
       return false;
     }
     // A backward jump has occurred - check if it's a known holding pattern.
     if (this.lastPc == this.lastBackjump && this.holdingPatterns[this.lastPc]) {
-      this.holding = true;
+      this.holding = [pc, this.lastPc];
       return true;
     }
     // Keep track of this backjump.
     this.lastBackjump = this.lastPc;
-    this.lastBackjumpPos = this.debug.pos;
+    this.pos2 = this.pos1;
+    this.pos1 = this.debug.pos;
     this.lastPc = pc;
     return false;
   }
@@ -502,14 +506,26 @@ class HoldingPatternTracker {
       return;
     }
     // we will only find the pattern if the interrupt occurs immediately after a backjump
-    const pos = this.debug.pos;
-    const diff = pos - this.lastPos;
-    if (this.lastPc != this.lastBackjump || diff <= 0 || pos < 2 * diff) return;
+    const diff = this.pos1 - this.pos2;
+    if (this.lastPc != this.lastBackjump || diff <= 0 || this.pos1 < 2 * diff) return;
     const buf = this.debug.buffer;
     // check for a cycle in the trace log
+// incorrect find: $3d38c - not quite right, need up to 8 iterations to know it's
+// a holding pattern.
+// console.error(`pc=${this.lastPc.toString(16)}, diff=${diff}, pos=${this.pos1}, buf=${diff > 0 && diff < 20 && this.pos1 > 2 * diff ? buf.slice(this.pos1 - 2 * diff, this.pos1) : null}`);
     for (let i = 0; i < diff; i++) {
-      if (buf[pos - i] != buf[this.lastPos - i]) return;
+      if (buf[this.pos1 - i] != buf[this.pos2 - i]) return;
     }
+
+ // 50d8:5b   $380b2: d0 f7    BNE $380ab  
+ // 50d8:5b   $380ab: 9d 00 02 STA $0200,x   write $0228 <- $f0
+ // 50d8:5b   $380ae: e8       INX         
+ // 50d8:5b   $380af: e8       INX         
+ // 50d8:5b   $380b0: e8       INX         
+ // 50d8:5b   $380b1: e8       INX         
+ // 50d8:5b   $380b2: d0 f7    BNE $380ab  
+ // 50d8:5b   --- frames elided waiting for interrupt ---
+
     console.log(`Found holding pattern backjump: $${this.lastPc.toString(16).padStart(5,0)}`);
     this.holdingPatterns[this.lastPc] = true;
   }
@@ -528,7 +544,7 @@ class TracePosition {
 
   distance(that) {
     if (!that) return Infinity;
-    return this.pos - that.pos + (this.size) * (this.resets - that.resets);
+    return this.pos - that.pos + this.debug.buffer.length * (this.resets - that.resets);
   }
 
   isValid() {

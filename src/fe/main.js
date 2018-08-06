@@ -179,6 +179,11 @@ class Main {
     this.start();
   }
 
+  advance(instructions = 100) {
+    this.nes.debug.breakIn = instructions;
+    this.start();
+  }
+
   // layout() {
   //   let navbarHeight = parseFloat(window.getComputedStyle(this.navbar).height);
   //   this.screenContainer.style.height = `${window.innerHeight -
@@ -189,9 +194,11 @@ class Main {
 
 let snapshot;
 window.main = new Main(document.getElementById('screen'));
-main.advance = () => { nes.debug.breakIn = 100; main.start(); };
 main.save = () => {snapshot = nes.cpu.snapshot();}; // q
 main.load = () => {nes.cpu.restore(snapshot);}; // w
+
+// TODO - save snapshots to local storage
+//   - consider also storing a screenshot along with?
 
 
 // main.track = (type) => {
