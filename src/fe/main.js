@@ -4,7 +4,7 @@ import {Screen} from './screen.js';
 import {Speakers} from './speakers.js';
 import {KeyboardController} from './keyboardcontroller.js';
 import {FrameTimer} from './frametimer.js';
-import {Component, WatchPanel, WatchPage, Trace} from './debugger.js';
+import {ChrRomViewer, Component, PatternTableViewer, Trace, WatchPanel, WatchPage} from './debugger.js';
 
 const bufferLog = () => {}; console.log.bind(console);
 
@@ -190,6 +190,14 @@ class Main {
   //     navbarHeight}px`;
   //   this.screen.fitInParent();
   // }
+
+  patternTable() {
+    return new PatternTableViewer(this.nes);
+  }
+
+  chrViewer(...pages) {
+    return new ChrRomViewer(this.nes, pages);
+  }
 }
 
 let snapshot;

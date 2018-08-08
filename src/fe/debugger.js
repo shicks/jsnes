@@ -212,6 +212,7 @@ export class Trace extends Component {
     const top = this.nes.debug.trace(this.current, previous, (s) => result.push(s));
     if (!this.top) this.top = top;
 
+    const documentScroll = document.body.scrollTop;
     const scroll = this.element.scrollTop;
     this.next.scrollIntoView();
     let shouldScroll = true;
@@ -222,6 +223,7 @@ export class Trace extends Component {
     text(this.trace, result.join('\n'));
     this.fillNext();
     if (shouldScroll) this.next.scrollIntoView();
+    document.body.scrollTop = documentScroll;
   }
 
   back() {
@@ -237,3 +239,119 @@ export class Trace extends Component {
     this.next.textContent = this.nes.debug.nextInstruction();
   }
 }
+
+export class PatternTableViewer extends Component {
+  // TODO - allow selecting a palette?
+  // TODO - static CHR ROM viewer?
+  constructor(nes) {
+    super();
+    this.nes = nes;
+    //this.table = table << 12; // 0 (left) or 1 (right)
+    this.canvas = child(this.element, 'canvas', 'patterntable');
+    this.canvas.width = 288;
+    this.canvas.height = 180;
+    this.context = this.canvas.getContext('2d');
+    // TODO - palattes at bottom?
+    // We could also try to be smart about which palettes are used for
+    //    which tiles, and auto-pick unique options.
+    // Note: extra size is for a black grid between all patterns.
+    this.imageData = this.context.getImageData(0, 0, 288, 143);
+
+    this.buf = new ArrayBuffer(this.imageData.data.length);
+    this.buf8 = new Uint8ClampedArray(this.buf);
+    this.buf32 = new Uint32Array(this.buf);
+
+    // Set alpha
+    for (let i = 0; i < this.buf32.length; ++i) {
+      this.buf32[i] = 0xff000000;
+    }
+
+    this.palette = [
+      0xffffff,
+      0xaaaaaa,
+      0x555555,
+      0x000000,
+    ];
+    this.paletteIndex = -1;
+    this.vram = this.nes.ppu.vramMem;
+  }
+
+  getTile(table, row, col, tileRow, colors) {
+    const addr = (table << 12) | (row << 8) | (col << 4) | tileRow;
+    this.getTileInternal(this.vram, addr, colors);
+  }
+
+  getTileInternal(ram, addr, colors) {
+    let upper = ram[addr | 8];
+    let lower = ram[addr];
+    for (let bit = 7; bit >= 0; bit--) {
+      colors[bit] = this.palette[((upper & 1) << 1) | (lower & 1)] | 0xff000000;
+      upper >>>= 1;
+      lower >>>= 1;
+    }
+  }
+
+  frame() {
+    // Update the image data.
+    const tile = [0, 0, 0, 0, 0, 0, 0, 0];
+    for (let table = 0; table < 2; table++) {
+      const x0 = table ? 145 : 0;
+      for (let row = 0; row < 16; row++) {
+        const y1 = row * 9;
+        for (let column = 0; column < 16; column++) {
+          const x1 = x0 + column * 9;
+          for (let tileRow = 0; tileRow < 8; tileRow++) {
+            this.getTile(table, row, column, tileRow, tile);
+            const index = (y1 + tileRow) * 288 + x1;
+            
+            for (let bit = 0; bit < 8; bit++) {
+              // Convert pixel from NES BGR to canvas ABGR
+              this.buf32[index + bit] = tile[bit];
+            }
+          }
+        }
+      }
+
+      // add the palette choices
+      const p = table ? this.nes.ppu.sprPalette : this.nes.ppu.imgPalette;
+      const y0 = 148;
+      for (let pal = 0; pal < 4; pal++) {
+        const x1 = x0 + pal * 33;
+        for (let row = 0; row < 2; row++) {
+          const y1 = y0 + row * 16;
+          for (let col = 0; col < 2; col++) {
+            const i = pal * 4 + row * 2 + col;
+            this.context.fillStyle = `#${p[i].toString(16).padStart(6,0)}`;
+            this.context.fillRect(x1 + col * 16, y1, 16, 16);
+          }
+        }
+      }
+    }
+
+    this.imageData.data.set(this.buf8);
+    this.context.putImageData(this.imageData, 0, 0);
+  }
+}
+
+export class ChrRomViewer extends PatternTableViewer {
+  
+  // views 1k pages
+  constructor(nes, pages) {
+    super(nes);
+    this.pages = pages;
+  }
+
+  getTile(table, row, col, tileRow, data) {
+    // support up to 8 different pages
+    const bankIndex = (table << 2) | (row >>> 2);
+    if (bankIndex >= this.pages.length) {
+      for (let i = 0; i < 8; i++) data[i] = 0xffffff;
+    }
+
+    const bank = this.pages[bankIndex];
+    const bankNum = bank >>> 2;
+    const addr = (bank % 4) << 10 | ((row & 3) << 8) | (col << 4) | tileRow;
+    this.getTileInternal(this.nes.rom.vrom[bankNum], addr, data);
+  }
+}
+

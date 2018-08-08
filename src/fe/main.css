@@ -103,3 +103,8 @@
   height: 1em;
   color: #888;
 }
+
+.nametable {
+  width: 288px;
+  height: 180px; /* 143 */
+}
