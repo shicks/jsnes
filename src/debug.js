@@ -90,6 +90,7 @@ export class Debug {
     this.breakAtVBlank = false;
     this.break = false;
     this.mt = new Debug.MemTracker(this.nes);
+    this.origin = new Debug.OriginTracker(this.nes);
     this.frame = 0;
     this.scanline = 0;
   }
@@ -140,6 +141,11 @@ export class Debug {
     const bank = this.nes.banks[pc >>> 13];
     const addr =
         bank != null ? (bank << 13) | (pc & 0x1fff) : pc < 0x2000 ? pc & 0x7ff : pc;
+    if (bank != null) {
+      this.origin.logCpu(opcode, addr);
+    } else {
+      this.origin.logIndirect();
+    }
     // only check for backjumps in PRG.
     let wasHolding = this.holding.holding;
     if (bank != null && this.holding.check(addr)) {
@@ -457,6 +463,71 @@ return;
   watch() {
     return new Debug.Watch(this.nes);
   }
+
+  origins(destination) {
+    return this.origin.origins(destination);
+  }
+}
+
+
+/**
+ * Keeps track of a piece of data for each element of the call stack.
+ * Double-checks that the address pushed onto the stack is the same as
+ * the data coming off before returning it.
+ * @template T
+ */
+class CallStackTracker {
+  constructor(nes) {
+    this.nes = nes;
+    /** @type {!Array<{sp: number, pc: number, data: T}>} */
+    this.stack = [];
+  }
+
+  /**
+   * Call after pushing to the stack and updating the PC.
+   * Example:
+   * ```
+   *   ; SP = $1f7
+   *   $8421: jsr $fc63  ; SP <- $1f5, $1f6 <- #$23, $1f7 <- #$84
+   *   $fc63: lda #$0
+   * ```
+   * This will push `{sp: $1f5, pc: $8423}`.
+   *
+   * @param {T} data
+   */
+  push(data) {
+    // First remove any obsolete elements.
+    const sp = this.nes.cpu.REG_SP;
+    const mem = this.nes.cpu.mem;
+    const pc = mem[sp + 1] | (mem[sp + 2] << 8);
+    const stack = this.stack;
+    while (stack.length && stack[stack.length - 1].sp <= sp) stack.pop();
+    stack.push({sp, pc, data});
+  }
+
+  /**
+   * Call before popping the stack and restoring the PC.
+   * Example:
+   * ```
+   *   ; SP = $1f5, ($1f6) = $8423, stack ends with {sp: $1f5, pc: $8423}
+   *   $fc69: rts      ; SP <- $1f7, PC <- $8423
+   *   $8424: lda #$0
+   * ```
+   * Before executing the `rts`, we get rid of anything with smaller SP
+   * from the top of the stack, then check for a match against the current
+   * top of the CPU's stack.
+   *
+   * @return {T|undefined} data
+   */
+  pop() {
+    const sp = this.nes.cpu.REG_SP;
+    const mem = this.nes.cpu.mem;
+    const pc = mem[sp + 1] | (mem[sp + 2] << 8);
+    const stack = this.stack;
+    let top;
+    while (stack.length && stack[stack.length - 1].sp <= sp) top = stack.pop();
+    return top && top.sp == sp && top.pc == pc ? top.data : undefined;
+  }
 }
 
 
@@ -552,6 +623,86 @@ class TracePosition {
         this.resets == this.debug.resets - 1 && this.pos > this.debug.pos;
   }
 }
+
+
+Debug.OriginTracker = class {
+  constructor(nes) {
+    this.nes = nes;
+    this.lastPc = null;
+    this.source = null;
+    /** @type {{[dst: number]: {[src: number]: {[type: string]: number}}}} */
+    this.data = {};
+    this.stack = new CallStackTracker(nes);
+  }
+
+  add(origin, destination, type) {
+    let map = this.data[destination];
+    if (!map) map = this.data[destination] = {'': {}};
+    let byOrigin = map[type];
+    if (!byOrigin) byOrigin = map[type] = {};
+    byOrigin[origin] = (byOrigin[origin] || 0) + 1;
+    map[''][origin] = (map[''][origin] || 0) + 1;
+  }
+
+  logCpu(op, pc) {
+    // If we just came from a jump, log it
+    let source = this.source;
+    if (source) {
+      if (source == 'cond') {
+        source = pc == this.lastPc + 2 ? 'cond-f' : 'cond-t';
+      }
+      this.add(this.lastPc, pc, source);
+      if (source.startsWith('call')) {
+        this.stack.push(pc); // push addr of first instruction of sub
+      }
+    }
+    // If we're about to return, pop the call stack tracker
+    // Note: is we called a routine that consisted entirely
+    // of a single RTS onstruction, then we'll immediately
+    // pop the PC we just pushed above, which is correct.
+    if (op == 0x60) { // rts
+      const entry = this.stack.pop()
+      if (entry) this.add(entry, pc, 'exit');
+    }
+    // If this is a jump, track it
+    this.source = JUMP_OPCODES[op];
+    this.lastPc = this.source ? pc : null;
+  }
+
+  logIndirect() {
+    if (this.source) this.source += '-ind';
+  }
+
+  clear() {
+    this.data = {};
+  }
+
+  origins(destination) {
+    const result = {};
+    const data = this.data[destination] || {};
+    for (const origin in data['']) {
+      result['$' + Number(origin).toString(16).padStart(5, 0)] = data[''][origin];
+    }
+    return result;
+  }
+}
+
+
+const JUMP_OPCODES = {
+  0x10: 'cond', // bpl
+  0x30: 'cond', // bmi
+  0x50: 'cond', // bvc
+  0x70: 'cond', // bvs
+  0x90: 'cond', // bcb
+  0xb0: 'cond', // bcs
+  0xd0: 'cond', // bne
+  0xf0: 'cond', // beq
+  0x4c: 'jmp',
+  0x6c: 'jmp-ind',
+  0x20: 'call',
+  //0x40: 'rti'
+  0x60: 'rts',
+};
 
 
 Debug.Coverage = class {
@@ -665,9 +816,6 @@ Debug.MemTracker = class {
     return c;
   }
 };
-
-// TODO - we could check against watches on every write, but that's more
-// invasive - instead, we just check each frame or so if anything updated
 
 // TODO - any way to configurably watch PRG page switches?
 Debug.Watch = class {

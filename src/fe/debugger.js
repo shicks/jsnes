@@ -146,9 +146,8 @@ export class WatchPage extends WatchGroup {
       for (let j = i; j < i + 0x10; j++) {
         const watch = Watch.ram(nes, j)
         row.appendChild(watch.element);
-        watch.element.addEventListener('click',
-            () => watch.element.style.fontWeight =
-                 watch.element.style.fontWeight == 'bold' ? 'normal' : 'bold');
+        watch.element.addEventListener(
+            'click', () => watch.element.classList.toggle('highlight'));
         this.watches.push(watch);
       }
     }

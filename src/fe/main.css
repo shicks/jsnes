@@ -77,6 +77,12 @@
   margin-left: 2em;
 }
 
+.watch .highlight,
+.watchpage .highlight {
+  font-weight: bold;
+  background-color: #ccc;
+}
+
 .trace {
   font-size: 83%;
   white-space: pre;
