@@ -251,8 +251,7 @@ export class PatternTableViewer extends Component {
     this.canvas.width = 288;
     this.canvas.height = 180;
     this.context = this.canvas.getContext('2d');
-    // TODO - palattes at bottom?
-    // We could also try to be smart about which palettes are used for
+    // We could try to be smart about which palettes are used for
     //    which tiles, and auto-pick unique options.
     // Note: extra size is for a black grid between all patterns.
     this.imageData = this.context.getImageData(0, 0, 288, 143);
@@ -266,14 +265,24 @@ export class PatternTableViewer extends Component {
       this.buf32[i] = 0xff000000;
     }
 
-    this.palette = [
-      0xffffff,
-      0xaaaaaa,
-      0x555555,
-      0x000000,
-    ];
-    this.paletteIndex = -1;
+    this.palette = null;
+    this.palIndex = [-1, -1];
     this.vram = this.nes.ppu.vramMem;
+    this.canvas.addEventListener('click', (e) => this.click(e));
+  }
+
+  click(e) {
+    if (e.offsetY < 145) return;
+    let x = e.offsetX;
+    const table = x < 146 ? 0 : 1;
+    if (table) x -= 145;
+    const index = Math.floor(x / 33);
+    if (this.palIndex[table] == index) {
+      this.palIndex[table] = -1;
+    } else {
+      this.palIndex[table] = index;
+    }
+    this.frame();
   }
 
   getTile(table, row, col, tileRow, colors) {
@@ -285,7 +294,7 @@ export class PatternTableViewer extends Component {
     let upper = ram[addr | 8];
     let lower = ram[addr];
     for (let bit = 7; bit >= 0; bit--) {
-      colors[bit] = this.palette[((upper & 1) << 1) | (lower & 1)] | 0xff000000;
+      colors[bit] = this.palette[((upper & 1) << 1) | (lower & 1)];
       upper >>>= 1;
       lower >>>= 1;
     }
@@ -295,6 +304,21 @@ export class PatternTableViewer extends Component {
     // Update the image data.
     const tile = [0, 0, 0, 0, 0, 0, 0, 0];
     for (let table = 0; table < 2; table++) {
+
+      // Select the palette
+      const p = table ? this.nes.ppu.imgPalette : this.nes.ppu.sprPalette;
+      if (this.palIndex[table] < 0) {
+        this.palette = [
+          0x000000,
+          0xffffff,
+          0xaaaaaa,
+          0x555555,
+        ];
+      } else {
+        this.palette = p.slice(4 * this.palIndex[table]).slice(0, 4);
+      }
+      this.palette = this.palette.map(x => (x | 0xff000000) >>> 0);
+
       const x0 = table ? 145 : 0;
       for (let row = 0; row < 16; row++) {
         const y1 = row * 9;
@@ -313,7 +337,6 @@ export class PatternTableViewer extends Component {
       }
 
       // add the palette choices
-      const p = table ? this.nes.ppu.sprPalette : this.nes.ppu.imgPalette;
       const y0 = 148;
       for (let pal = 0; pal < 4; pal++) {
         const x1 = x0 + pal * 33;
@@ -321,9 +344,17 @@ export class PatternTableViewer extends Component {
           const y1 = y0 + row * 16;
           for (let col = 0; col < 2; col++) {
             const i = pal * 4 + row * 2 + col;
-            this.context.fillStyle = `#${p[i].toString(16).padStart(6,0)}`;
+            const c =
+                ((p[i] & 0xff) << 16) |
+                (p[i] & 0xff00) |
+                ((p[i] & 0xff0000) >> 16);
+            this.context.fillStyle = `#${c.toString(16).padStart(6,0)}`;
             this.context.fillRect(x1 + col * 16, y1, 16, 16);
           }
+        }
+        if (pal == this.palIndex[table]) {
+          this.context.strokeStyle = '#ff0000';
+          this.context.strokeRect(x1 + 1, y0 + 1, 30, 30);
         }
       }
     }
@@ -346,6 +377,7 @@ export class ChrRomViewer extends PatternTableViewer {
     const bankIndex = (table << 2) | (row >>> 2);
     if (bankIndex >= this.pages.length) {
       for (let i = 0; i < 8; i++) data[i] = 0xffffff;
+      return;
     }
 
     const bank = this.pages[bankIndex];

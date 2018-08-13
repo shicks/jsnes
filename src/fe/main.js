@@ -195,7 +195,7 @@ class Main {
     return new PatternTableViewer(this.nes);
   }
 
-  chrViewer(...pages) {
+  chrRom(...pages) {
     return new ChrRomViewer(this.nes, pages);
   }
 }
@@ -220,7 +220,7 @@ main.track = (type) => {
   nes.debug.coverage.clear();
   main.functions[67] = () => console.log(nes.debug.coverage.expectCovered()); // C (Covered)
   main.functions[85] = () => console.log(nes.debug.coverage.expectUncovered()); // U (Uncov)
-  main.functions[86] = () => console.log(nes.debug.coverage.candidates(type)); // V (List)
+  main.functions[86] = () => console.log(nes.debug.coverage.candidates(type, true)); // V (List)
 };
 
 const deepMap = (x, f) => {

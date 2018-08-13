@@ -93,6 +93,7 @@ export class Debug {
     this.origin = new Debug.OriginTracker(this.nes);
     this.frame = 0;
     this.scanline = 0;
+    this.lastPc = 0;
   }
 
   growBreakpoints_(addr) {
@@ -108,18 +109,18 @@ export class Debug {
    * @param {string} modes A string made of 'r', 'w', and/or 'x'
    */
   breakAt(addr, mem, modes) {
-    if (!(addr instanceof Array)) {
-      addr = [addr, addr];
-    }
-    if (!this.breakpoints || addr[1] >= this.breakpoints.length) {
-      this.growBreakpoints_(addr[1]);
+    if (addr instanceof Array && addr.length == 1) addr = addr[0];
+    if (!(addr instanceof Array)) addr = [addr, addr];
+    if (addr.length < 3) addr = [addr[0], 1, addr[1]];
+    if (!this.breakpoints || addr[2] >= this.breakpoints.length) {
+      this.growBreakpoints_(addr[2]);
     }
     let mask = 0;
     for (const mode of modes) {
       mask |= BREAKPOINT_MODES[mem + '-' + mode];
       if (mask != mask) throw new Error(`Bad mode ${mode} on ${mem}`);
     }
-    for (let i = addr[0]; i <= addr[1]; i++) {
+    for (let i = addr[0]; i <= addr[2]; i += addr[1]) {
       this.breakpoints[i] |= mask;
     }
   }
@@ -138,6 +139,7 @@ export class Debug {
     //if (this.holding.holding) return;
 
     // If we've gotten to this point then we're not ignoring anything.
+    this.lastPc = pc;
     const bank = this.nes.banks[pc >>> 13];
     const addr =
         bank != null ? (bank << 13) | (pc & 0x1fff) : pc < 0x2000 ? pc & 0x7ff : pc;
@@ -222,14 +224,19 @@ export class Debug {
     if (this.breakpoints) {
       const mask = bank != null ? BREAK_PRG_R : (op >> 4) & 3;
       if ((this.breakpoints[addr] & mask)
-          && this.breakIf(address, op & MEM_READ ? 'r' : 'w', value)) {
-        console.log(`break on ${op & MEM_READ ? 'read' : 'write'
-                     } ${bank ? 'PRG' : 'RAM'} $${addr.toString(16)}`);
+          && this.breakIf(address, op & MEM_READ ? 'r' : 'w', value, this.banked(this.lastPc))) {
+        const opMask = op & (MEM_READ | MEM_WRITE);
+        const type = opMask == MEM_READ ? 'read' :
+            opMask == MEM_WRITE ? 'write' : 'read-write';
+        console.log(`break on ${type} ${bank ? 'PRG' : 'RAM'} $${addr.toString(16)
+                     } at ${this.banked(this.lastPc)}`);
         this.break = true;
       } else if ((op & MEM_WORD) && (this.breakpoints[addr + 1] & mask)
-                && this.breakIf(address, 'r', value)) {
-        console.log(`break on read ${bank ? 'PRG' : 'RAM'
-                     } $${(addr + 1).toString(16)}`);
+                 && this.breakIf(address, 'r', value, this.banked(this.lastPc))) {
+        // NOTE: this can give the wrong PC immediately
+        // after jumps?
+        console.log(`break on read ${bank ? 'PRG' : 'RAM'} $${
+                     (addr + 1).toString(16)} at ${this.banked(this.lastPc)}`);
         this.break = true;
       }
     }
@@ -280,6 +287,23 @@ export class Debug {
   }
 
   /**
+   * Calls the given address, pushing the current PC onto the stack.
+   * Be very careful about handling registers properly!
+   */
+  call(addr) {
+    this.nes.cpu.push((this.nes.cpu.REG_PC >> 8) & 255);
+    this.nes.cpu.push(this.nes.cpu.REG_PC & 255);
+    this.nes.cpu.REG_PC = addr - 1;
+  }
+
+  banked(addr) {
+    const bank = this.nes.banks[addr >>> 13];
+    return bank != null ?
+        '$' + ((addr & 0x1fff) | (bank << 13)).toString(16).padStart(5, 0) :
+        '$' + addr.toString(16).padStart(4, 0);
+  }
+
+  /**
    * Iterates in forward order anyway.
    * @param {function(opcode, pc, pcrom)=} cpu
    * @param {function(addr, addrrom, read?, written?)=} mem
@@ -297,9 +321,9 @@ export class Debug {
       let resets = end.resets;
       if (pos < 0) {
         resets--;
-        pos = Math.max(pos + this.debug.buffer.length, this.debug.pos + 1);
+        pos = Math.max(pos + this.buffer.length, this.pos + 1);
       }
-      start = new TracePosition(this.debug, resets, pos, null, null);
+      start = new TracePosition(this, resets, pos, null, null);
     }
     let pos = end.pos;
     let resets = end.resets;
@@ -340,6 +364,9 @@ export class Debug {
         const addr = this.buffer[--pos] | (this.buffer[--pos] << 8);
         const romaddr =
             selector & PAGED ? (addr & 0x1fff) | (this.buffer[--pos] << 13) : null;
+
+if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, 5).map(x=>x.toString(16)), addr, romaddr);
+
         cpu && cpu(op, addr, romaddr);
         break;
       }
@@ -735,7 +762,7 @@ Debug.Coverage = class {
     return count;
   }
 
-  candidates(type) {
+  candidates(type, format = false) {
     let mask = 0;
     if (type == 'x') mask = BREAK_PRG_X | BREAK_RAM_X;
     else if (type == 'r') mask = BREAK_PRG_R | BREAK_RAM_R;
@@ -759,9 +786,27 @@ Debug.Coverage = class {
         candidates['RAM $' + i.toString(16).padStart(4, 0)] = value;
       }
     }
+    if (type == 'x' && format) {
+      const keys =
+          Object.keys(candidates)
+              .sort()
+              .map(x => Number.parseInt(x.substring(5), 16));
+      const ranges = [];
+      for (const key of keys) {
+        if (ranges.length && key - ranges[ranges.length - 1][1] < 4) {
+          ranges[ranges.length - 1][1] = key;
+        } else {
+          ranges.push([key, key]);
+        }
+      }
+      return ranges.map(x => {
+        x = x.map(y => `$${y.toString(16).padStart(5, 0)}`);
+        return `${x[0]}..${x[1]}`;
+      }).join(', ');
+    }
     return candidates;
   }
-}
+};
 
 Debug.MemTracker = class {
   constructor(nes) {
@@ -827,6 +872,7 @@ Debug.Watch = class {
     // TODO - watch individual bits?
     if (addr instanceof Array && addr.length == 1) addr = addr[0];
     if (!(addr instanceof Array)) addr = [addr, addr];
+    if (addr.length < 3) addr = [addr[0], 1, addr[1]];
     const mode = BREAKPOINT_MODES[`${type}-${op}`];
     if (!mode) throw new Error(`Bad mode: '${type}-${op}'`);
     const ws = this.nes.debug.watches || (this.nes.debug.watches = {});
@@ -844,7 +890,7 @@ Debug.Watch = class {
     const scanline = () => `${this.nes.ppu.frame.toString(16).padStart(6,0)}:${
                               this.nes.ppu.scanline < 21 ? -1 :
                                   (this.nes.ppu.scanline - 21).toString(16).padStart(2,0)}`;
-    for (let i = addr[0]; i <= addr[1]; i++) {
+    for (let i = addr[0]; i <= addr[2]; i += addr[1]) {
       const w = ws[i] || (ws[i] = {});
       if (op == 'w') {
         let last = read(i); // for keeping track of changes
