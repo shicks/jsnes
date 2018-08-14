@@ -16,10 +16,14 @@ Controller.BUTTON_RIGHT = 7;
 
 Controller.prototype = {
   buttonDown: function(key) {
+    if (this.state[key] == 0x41) return false;
     this.state[key] = 0x41;
+    return true;
   },
 
   buttonUp: function(key) {
+    if (this.state[key] == 0x40) return false;
     this.state[key] = 0x40;
+    return true;
   }
 };

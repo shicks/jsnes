@@ -156,6 +156,9 @@ CPU.prototype = {
   softReset() {
     this.REG_PC = this.load16bit(0xfffc) - 1;
     // TODO - this.requestIrq(2) ---> ?
+    if (this.debug && this.debug.recording) {
+      this.debug.recording.record({reset: true});
+    }
   },
 
   // Emulates a single CPU instruction, returns the number of cycles

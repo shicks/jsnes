@@ -13,6 +13,7 @@ export class FrameTimer {
     this.onGenerateFrame = props.onGenerateFrame;
     // Run on animation frame
     this.onWriteFrame = props.onWriteFrame;
+    this.onSkipFrame = props.onSkipFrame;
 
     // Whether to fire events or not
     this.running = false;
@@ -40,6 +41,9 @@ export class FrameTimer {
     // } else {
     //   console.log("requestAnimationFrame is not supported");
     // }
+
+    this.frame = 0;
+    this.frameSkip = 0;
   }
 
   start() {
@@ -64,7 +68,7 @@ export class FrameTimer {
       // TODO(sdh): probably avoid calibrating after a breakpoint?
       if (this.calibrationStartTime === null) {
         this.calibrationStartTime = new Date().getTime();
-        this.calibrationCurrentFrames = 0;
+        this.calibrationCurrentFrame = 0;
       } else {
         this.calibrationCurrentFrames += 1;
       }
@@ -92,6 +96,11 @@ export class FrameTimer {
       }
     }
 
+    if (++this.frame % (this.frameSkip + 1)) {
+      this.onSkipFrame();
+      this.onAnimationFrame();
+      return;
+    }
     this.requestAnimationFrame();
 
     if (this.running) {

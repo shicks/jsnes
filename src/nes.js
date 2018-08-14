@@ -150,14 +150,24 @@ NES.prototype = {
     }
     this.fpsFrameCount++;
     this.frameCount++;
+    if (this.debug && this.debug.recording) {
+      this.debug.recording.recordFrame();
+      this.debug.recording.playbackFrame();
+    }
   },
 
   buttonDown: function(controller, button) {
     this.controllers[controller].buttonDown(button);
+    if (this.debug && this.debug.recording) {
+      this.debug.recording.record({controller, button, pressed: true});
+    }
   },
 
   buttonUp: function(controller, button) {
     this.controllers[controller].buttonUp(button);
+    if (this.debug && this.debug.recording) {
+      this.debug.recording.record({controller, button, pressed: false});
+    }
   },
 
   zapperMove: function(x, y) {

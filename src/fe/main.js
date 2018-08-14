@@ -11,27 +11,6 @@ import {FileSystem} from './fs.js';
 
 const bufferLog = () => {}; console.log.bind(console);
 
-function loadBinary(path, callback, handleProgress) {
-  var req = new XMLHttpRequest();
-  req.open("GET", path);
-  req.overrideMimeType("text/plain; charset=x-user-defined");
-  req.onload = function() {
-    if (this.status === 200) {
-      callback(null, this.responseText);
-    } else if (this.status === 0) {
-      // Aborted, so ignore error
-    } else {
-      callback(new Error(req.statusText));
-    }
-  };
-  req.onerror = function() {
-    callback(new Error(req.statusText));
-  };
-  req.onprogress = handleProgress;
-  req.send();
-  return req;
-}
-
 class Main {
   constructor(screen) {
     this.state = {
@@ -83,15 +62,18 @@ class Main {
 
     this.frameTimer = new FrameTimer({
       onGenerateFrame: () => {
-        this.nes.frame.bind(this.nes);
+        this.nes.frame();
       },
       onWriteFrame: () => {
-        this.gamepadController.update();
         this.screen.writeBuffer();
+        this.gamepadController.update();
         for (const el of document.querySelectorAll('#grid > .component')) {
           const component = Component.map.get(el);
           if (component) component.frame();
         }
+      },
+      onSkipFrame: () => {
+        this.nes.frame();
       },
     });
 
@@ -101,6 +83,11 @@ class Main {
     // window.addEventListener("resize", this.layout.bind(this));
     // this.layout();
     this.load();
+  }
+
+  setFrameSkip(skip) {
+    this.frameTimer.frameSkip = skip;
+    this.speakers.enabled = false;
   }
 
   getHash(key) {
@@ -116,6 +103,7 @@ class Main {
   setHash(key, value) {
     const components = [];
     for (const component of window.location.hash.substring(1).split('&')) {
+      if (!component) continue;
       const split = component.split('=');
       if (split[0] === key) {
         components.push(`${key}=${encodeURIComponent(value)}`);
@@ -124,6 +112,7 @@ class Main {
         components.push(component);
       }
     }
+    if (key) components.push(`${key}=${encodeURIComponent(value)}`);
     window.location.hash = '#' + components.join('&');
   }
 
@@ -139,12 +128,7 @@ class Main {
     const file = await this.fs.pick('Select a ROM image');
     if (file) {
       this.handleLoaded(file.name, file.data);
-    }
-  }
-
-  handleProgress(e) {
-    if (e.lengthComputable) {
-      this.state.loadedPercent = e.loaded / e.total * 100;
+      this.setHash('rom', file.name);
     }
   }
 

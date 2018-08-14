@@ -34,7 +34,7 @@ class Picker extends Component {
     if (text) child(this.element, 'div', 'title').textContent = text;
     for (const {name, size} of files) {
       const line = child(this.element, 'div', 'file');
-      line.textContent = `${size.padStart(9)} ${file}`;
+      line.textContent = `${size.toString(10).padStart(9)} ${name}`;
       line.dataset.name = name;
     }
     const upload = child(this.element, 'input');

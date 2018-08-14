@@ -5,11 +5,12 @@ export class Speakers {
     this.onBufferUnderrun = onBufferUnderrun;
     this.bufferSize = 8192;
     this.buffer = new RingBuffer(this.bufferSize * 2);
+    this.enabled = true;
   }
 
   start() {
     // Audio is not supported
-    if (!window.AudioContext) {
+    if (!this.enabled || !window.AudioContext) {
       return;
     }
     this.audioCtx = new window.AudioContext();
@@ -31,6 +32,7 @@ export class Speakers {
   }
 
   writeSample(left, right) {
+    if (!this.enabled) return;
     if (this.buffer.size() / 2 >= this.bufferSize) {
       console.log(`Buffer overrun`);
     }
@@ -39,6 +41,10 @@ export class Speakers {
   }
 
   onaudioprocess(e) {
+    if (!this.enabled) {
+      this.stop();
+      return;
+    }
     var left = e.outputBuffer.getChannelData(0);
     var right = e.outputBuffer.getChannelData(1);
     var size = left.length;

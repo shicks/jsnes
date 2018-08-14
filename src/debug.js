@@ -1,4 +1,4 @@
-import {TrieSet} from './utils.js';
+import {Recording} from './recording.js';
 
 // TODO - more pluggable debug framework
 //  - provide a few hooks via properties on nes:
@@ -94,6 +94,7 @@ export class Debug {
     this.frame = 0;
     this.scanline = 0;
     this.lastPc = 0;
+    this.recording = new Recording(this.nes);
   }
 
   growBreakpoints_(addr) {
