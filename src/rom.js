@@ -84,12 +84,14 @@ ROM.prototype = {
   load: function(data) {
     var i, j, v;
 
-    if (data.indexOf("NES\x1a") === -1) {
+    if (data[0] != 0x4e || data[1] != 0x45 ||
+        data[2] != 0x53 || data[3] != 0x1a) {
+      // Needs to start with 'NES\x1a'.
       throw new Error("Not a valid NES ROM.");
     }
     this.header = new Array(16);
     for (i = 0; i < 16; i++) {
-      this.header[i] = data.charCodeAt(i) & 0xff;
+      this.header[i] = data[i];
     }
     this.romCount = this.header[4];
     this.vromCount = this.header[5] * 2; // Get the number of 4kB banks, not 8kB
@@ -119,7 +121,7 @@ ROM.prototype = {
         if (offset + j >= data.length) {
           break;
         }
-        const x = this.rom[i][j] = data.charCodeAt(offset + j) & 0xff;
+        const x = this.rom[i][j] = data[offset + j];
         this.hash = ((this.hash * 31 >>> 0) + x) >>> 0;
       }
       offset += 16384;
@@ -132,7 +134,7 @@ ROM.prototype = {
         if (offset + j >= data.length) {
           break;
         }
-        const x = this.vrom[i][j] = data.charCodeAt(offset + j) & 0xff;
+        const x = this.vrom[i][j] = data[offset + j];
         this.hash = ((this.hash * 31 >>> 0) + x) >>> 0;
       }
       offset += 4096;

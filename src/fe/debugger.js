@@ -1,57 +1,6 @@
 // Debugging tools
-
-const child = (parent, type, ...classes) => {
-  const e = document.createElement(type);
-  parent.appendChild(e);
-  for (const c of classes) {
-    e.classList.add(c);
-  }
-  return e;
-};
-
-const text = (parent, text) => {
-  const n = document.createTextNode(text);
-  parent.appendChild(n);
-};
-
-// Format a hex number
-export const fmt = (x, p) => `$${x.toString(16).padStart(p, 0)}`;
-
-// A component of the grid.  Handles drag-and-drop rearrangement, closing, etc.
-export class Component {
-  constructor() {
-    this.outer = child(document.getElementById('grid'), 'div', 'component');
-    this.corner = child(this.outer, 'div', 'corner');
-    this.addCornerButton('x', () => this.outer.remove());
-    Component.map.set(this.outer, this);
-    this.element = child(this.outer, 'div');
-  }
-
-  addCornerButton(text, handler) {
-    const button = child(this.corner, 'div');
-    button.textContent = text;
-    button.addEventListener('click', handler);
-  }
-
-  remove() { this.element.remove(); }
-
-  // Returns a string representation of this component's state, to be merged
-  // into the URL fragment.
-  getState() { return ''; }
-  // Sets the state of this component from a URL fragment.  May assume presence
-  // of localstorage, etc.
-  setState(state) {}
-
-  // Abstract update method called on each frame.
-  frame() {}
-
-  // Update method for stepping execution - defaults to same as frame.
-  // This runs every time the CPU breaks.
-  step() { this.frame(); }
-}
-
-// Map from elements to components.
-Component.map = new WeakMap();
+import {child, text, fmt} from './utils.js';
+import {Component} from './component.js';
 
 // A single watched memory location or expression.
 export class Watch {

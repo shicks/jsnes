@@ -4,7 +4,9 @@ import {Screen} from './screen.js';
 import {Speakers} from './speakers.js';
 import {KeyboardController} from './keyboardcontroller.js';
 import {FrameTimer} from './frametimer.js';
-import {ChrRomViewer, Component, PatternTableViewer, Trace, WatchPanel, WatchPage} from './debugger.js';
+import {ChrRomViewer, PatternTableViewer, Trace, WatchPanel, WatchPage} from './debugger.js';
+import {Component} from './component.js';
+import {FileSystem} from './fs.js';
 
 const bufferLog = () => {}; console.log.bind(console);
 
@@ -37,6 +39,9 @@ class Main {
       loading: true,
       loadedPercent: 3,
     };
+
+    this.fs = new FileSystem();
+    this.romName = null;
 
     this.screen = new Screen(screen);
     // screen - onGenerateFrame => this.nes.frame() ?
@@ -93,36 +98,42 @@ class Main {
     this.load();
   }
 
-  load() {
-    if (true) {
-      // const path =
-      //     'https://cors.io/?http://s000.tinyupload.com/?file_id=45741185993656486680';
-//      const path = 'https://cors.io/?http://s000.tinyupload.com/download.php?file_id=45741185993656486680&t=4574118599365648668052380';
-      // const path = 'https://cors.io/download.php' +
-      //       '?file_id=45741185993656486680&t=4574118599365648668089852';
-//const path = 'https://cors.io/?https://nofile.io/g/zBPxYTEKQzxHwW0JvHmHeVWivDdOTnhuCSXaBO1d5lktHdR3d6WdGQW8XWAGgtGS/Crystalis+%28U%29+%5B%21%5D.nes/';
-      const path = 'local-roms/rom.nes';
-      this.currentRequest = loadBinary(
-        path,
-        (err, data) => {
-          if (err) {
-            window.alert(`Error loading ROM: ${err.toString()}`);
-          } else {
-            this.handleLoaded(data);
-          }
-        },
-        this.handleProgress.bind(this)
-      );
-    // } else if (this.props.location.state && this.props.location.state.file) {
-    //   // TODO - handle drag and drop?
-    //   let reader = new FileReader();
-    //   reader.readAsBinaryString(this.props.location.state.file);
-    //   reader.onload = e => {
-    //     this.currentRequest = null;
-    //     this.handleLoaded(e.target.result);
-    //   };
-    // } else {
-    //   window.alert("No ROM provided");
+  getHash(key) {
+    for (const component of window.location.hash.substring(1).split('&')) {
+      const split = component.split('=');
+      if (split[0] === key) {
+        return decodeURIComponent(split[1]);
+      }
+    }
+    return undefined;
+  }
+
+  setHash(key, value) {
+    const components = [];
+    for (const component of window.location.hash.substring(1).split('&')) {
+      const split = component.split('=');
+      if (split[0] === key) {
+        components.push(`${key}=${encodeURIComponent(value)}`);
+        key = undefined;
+      } else {
+        components.push(component);
+      }
+    }
+    window.location.hash = '#' + components.join('&');
+  }
+
+  async load() {
+    const romName = this.getHash('rom');
+    if (romName) {
+      const data = await this.fs.get(romName);
+      if (data) {
+        this.handleLoaded(romName, data);
+        return;
+      }
+    }
+    const file = await this.fs.pick('Select a ROM image');
+    if (file) {
+      this.handleLoaded(file.name, file.data);
     }
   }
 
@@ -132,11 +143,12 @@ class Main {
     }
   }
 
-  handleLoaded(data) {
+  handleLoaded(name, data) {
     this.state.uiEnabled = true;
     this.state.running = true;
     this.state.loading = false;
-    this.nes.loadROM(data);
+    this.romName = name;
+    this.nes.loadROM(new Uint8Array(data));
     this.start();
   }
 

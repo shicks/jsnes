@@ -108,3 +108,20 @@
   width: 288px;
   height: 180px; /* 143 */
 }
+
+.file-picker {
+  font-size: 83%;
+  white-space: pre;
+  font-family: monospace;
+  width: 400px;
+  height: 320px;
+  overflow: auto;
+}
+
+.file-picker > .title {
+  font-size: 112%;
+}
+
+.file-picker > .file {
+  border-top: 1px solid #aaa;
+}
