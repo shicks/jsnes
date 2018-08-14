@@ -97,6 +97,15 @@ export class FileSystem {
     const files = await this.list();
     return new Promise((ok, fail) => {
       new Picker(ok, fail, files, text);
+    }).then((file) => {
+      if (file.data) {
+        // uploaded - store it
+        this.save(file.name, file.data);
+        return file;
+      } else {
+        // picked, fetch it
+        return this.get(file.name);
+      }
     });
   }
       

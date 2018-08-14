@@ -2,6 +2,7 @@ import {Controller} from '../controller.js';
 import {NES} from '../nes.js';
 import {Screen} from './screen.js';
 import {Speakers} from './speakers.js';
+import {GamepadController} from './gamepadcontroller.js';
 import {KeyboardController} from './keyboardcontroller.js';
 import {FrameTimer} from './frametimer.js';
 import {ChrRomViewer, PatternTableViewer, Trace, WatchPanel, WatchPage} from './debugger.js';
@@ -81,8 +82,11 @@ class Main {
     });
 
     this.frameTimer = new FrameTimer({
-      onGenerateFrame: this.nes.frame.bind(this.nes),
+      onGenerateFrame: () => {
+        this.nes.frame.bind(this.nes);
+      },
       onWriteFrame: () => {
+        this.gamepadController.update();
         this.screen.writeBuffer();
         for (const el of document.querySelectorAll('#grid > .component')) {
           const component = Component.map.get(el);
@@ -92,6 +96,7 @@ class Main {
     });
 
     this.keyboardController = new KeyboardController(this);
+    this.gamepadController = new GamepadController(this);
 
     // window.addEventListener("resize", this.layout.bind(this));
     // this.layout();
@@ -127,7 +132,7 @@ class Main {
     if (romName) {
       const data = await this.fs.get(romName);
       if (data) {
-        this.handleLoaded(romName, data);
+        this.handleLoaded(romName, data.data);
         return;
       }
     }
