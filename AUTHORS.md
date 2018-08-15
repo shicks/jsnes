@@ -1,7 +1,8 @@
 Authors
 =======
 
- * Ben Firshman
+ * Ben Firshman, original JSNES source
+ * Stephen Hicks, debugging extensions and other improvements
 
 Thanks to:
 

@@ -1,73 +1,23 @@
-# JSNES
+# JSNESx
 
-A JavaScript NES emulator.
+A JavaScript NES emulator for debugging and disassembling.
 
-It's a library that works in both the browser and Node.js. The browser UI is available at [https://github.com/bfirsh/jsnes-web](https://github.com/bfirsh/jsnes-web).
+Based on [JSNES], with a vanilla JS fork of the [browser UI] merged into it.
 
-## Installation
+[JSNES]: https://github.com/bfirsh/jsnes
+[browser UI]: https://github.com/bfirsh/jsnes-web
 
-For Node.js or Webpack:
+The primary focus of this fork is debugging and disassembly.  It exposes a
+variety of tools for generating CPU traces, coverage data, watches and
+breakpoints, etc.  I've also added support for battery saves, gamepads,
+and recording "movies".
 
-    $ npm install jsnes
+The emulator works on a "bring your own ROM" basis: ROMs, save files, etc,
+are all stored in IndexedDB (which should allow up to 50MB).  ROMs must be
+loaded into the webapp (via the `^` button in the top-right corner of the
+"Select a ROM" dialog) before playing, but should remain available
+indefinitely without re-browsing the hard drive every time.
 
-(Or `yarn add jsnes`.)
-
-In the browser, you can use [unpkg](https://unpkg.com):
-
-```html
-<script type="text/javascript" src="https://unpkg.com/jsnes/dist/jsnes.min.js"></script>
-```
-
-## Usage
-
-```javascript
-// Initialize and set up outputs
-var nes = new jsnes.NES({
-  onFrame: function(frameBuffer) {
-    // ... write frameBuffer to screen
-  },
-  onAudioSample: function(left, right) {
-    // ... play audio sample
-  }
-});
-
-// Read ROM data from disk (using Node.js APIs, for the sake of this example)
-const fs = require('fs');
-var romData = fs.readFileSync('path/to/rom.nes', {encoding: 'binary'});
-
-// Load ROM data as a string or byte array
-nes.loadROM(romData);
-
-// Run frames at 60 fps, or as fast as you can.
-// You are responsible for reliable timing as best you can on your platform.
-nes.frame();
-nes.frame();
-// ...
-
-// Hook up whatever input device you have to the controller.
-nes.buttonDown(1, jsnes.Controller.BUTTON_A);
-nes.frame();
-nes.buttonUp(1, jsnes.Controller.BUTTON_A);
-nes.frame();
-// ...
-```
-
-## Build
-
-To build a distribution:
-
-    $ yarn run build
-
-This will create `dist/jsnes.min.js`.
-
-## Running tests
-
-    $ yarn test
-
-## Formatting code
-
-All code must conform to [Prettier](https://prettier.io/) formatting. The test suite won't pass unless it does.
-
-To automatically format all your code, run:
-
-    $ yarn run format
+Since no special server is needed, it works directly from GitHub pages:
+http://shicks.github.io/jsnesx.  Only modern browsers are supported, and
+only latest Chrome has been tested.
