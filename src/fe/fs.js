@@ -18,7 +18,7 @@ export class File {
 }
 
 // Version 1 schema:
-//   Files: {name: string, size: number}
+//   Files: {name: string, size: number, modifiedMs: number, accessedMs: number}
 //   Blobs: {name: string, data: ArrayBuffer}
 const VERSION = 1;
 const FILES = 'Files';
@@ -49,8 +49,14 @@ class Picker extends Component {
       });
       reader.readAsArrayBuffer(file);
     });
-    this.addCornerButton('+', () => {
+    // upload file
+    this.addCornerButton('^', () => {
       if (upload) upload.click();
+    });
+    // return a new empty file
+    this.addCornerButton('+', () => {
+      const name = window.prompt('filename');
+      resolve({name, data: new Uint8Array(0)});
     });
     this.element.addEventListener('click', (e) => {
       if (e.target.dataset.name) {
@@ -115,6 +121,14 @@ export class FileSystem {
    * @return {!Promise<!File|undefined>}
    */
   get(name) {
+    // update accessedMs, but fire-and-forget.
+    this.db.transaction([FILES], 'readwrite', async (files) => {
+      const f = await request(files.get(name));
+      if (!f) return;
+      f.accessedMs = new Date().getTime();
+      return request(files.put(f));
+    });
+        
     return this.db.transaction(
         [BLOBS], 'readonly', (blobs) => request(blobs.get(name)));
   }
@@ -137,7 +151,7 @@ export class FileSystem {
         'readwrite',
         async (files, blobs, defaults) => {
           // First look for an existing file.
-          request(files.put({name, size}));
+          request(files.put({name, size, modifiedMs: new Date().getTime()}));
           request(blobs.put({name, data}));
         });
   }

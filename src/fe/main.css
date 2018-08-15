@@ -1,3 +1,48 @@
+#main {
+  display: flex;
+  flex-direction: column-reverse;
+  height: 100%;
+  width: 100%;
+  justify-content: flex-end;
+}
+
+#menu {
+  flex: 0 0 1.4em;
+  display: flex;
+  height: 1.4em;
+}
+#menu > div {
+  margin: 0 1em;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+  background: white;
+  width: 4em;
+}
+#menu > div > div:first-child {
+  padding-bottom: 0.2em;
+}
+#menu > div > div+div {
+  display: none;
+  width: 10em;
+  padding: 0.1em 0.4em;
+  border-left: 1px solid black;
+  border-right: 1px solid black;
+  z-index: 100;
+  background: white;
+}
+#menu > div > div:last-child {
+  padding-bottom: 0.4em;
+  border-bottom: 1px solid black;
+}
+#menu > div > div:first-child+div {
+  padding-top: 0.4em;
+  border-top: 1px solid black;
+}
+#menu > div:hover > div+div {
+  display: block;
+}
+
 #grid {
   display: flex;
   flex-wrap: wrap;

@@ -12,5 +12,13 @@ export const text = (parent, text) => {
   parent.appendChild(n);
 };
 
+export const link = (parent, text, handler) => {
+  const link = child(parent, 'a');
+  link.textContent = text;
+  link.href = '#';
+  link.addEventListener('click', handler);
+  return link;
+};
+
 // Format a hex number
 export const fmt = (x, p) => `$${x.toString(16).padStart(p, 0)}`;

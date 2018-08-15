@@ -32,8 +32,8 @@ export class KeyboardController {
     main.functions[80] = (main) => main.handlePauseResume(),  // P (Pause)
     main.functions[70] = (main) => main.advanceFrame(),  // F (Frame)
     main.functions[71] = (main) => main.advance(1),  // G (Step)
-    main.functions[81] = (main) => main.save(), // Q (Save)
-    main.functions[87] = (main) => main.load(), // W (Load)
+    main.functions[81] = (main) => main.saveSnapshot(), // Q (Save)
+    main.functions[87] = (main) => main.loadSnapshot(), // W (Load)
 
     document.addEventListener("keydown", (e) => this.handleKeyDown(e));
     document.addEventListener("keyup", (e) => this.handleKeyUp(e));
@@ -41,6 +41,7 @@ export class KeyboardController {
   }
 
   handleKeyDown(e) {
+    if (e.target.tagName == 'INPUT') return;
     var key = KEYS[e.keyCode];
     if (key) {
       this.main.nes.buttonDown(key[0], key[1]);
@@ -49,6 +50,7 @@ export class KeyboardController {
   }
 
   handleKeyUp(e) {
+    if (e.target.tagName == 'INPUT') return;
     var key = KEYS[e.keyCode];
     if (key) {
       this.main.nes.buttonUp(key[0], key[1]);
@@ -63,6 +65,7 @@ export class KeyboardController {
   }
 
   handleKeyPress(e) {
+    if (e.target.tagName == 'INPUT') return;
     e.preventDefault();
   }
 }

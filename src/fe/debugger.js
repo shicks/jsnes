@@ -1,5 +1,5 @@
 // Debugging tools
-import {child, text, fmt} from './utils.js';
+import {child, text, link, fmt} from './utils.js';
 import {Component} from './component.js';
 
 // A single watched memory location or expression.
@@ -336,3 +336,70 @@ export class ChrRomViewer extends PatternTableViewer {
   }
 }
 
+// TODO - nametable viewer?
+// TODO - sprite info viewer?
+
+export class RecordingPane extends Component {
+  constructor(main) {
+    super();
+    this.fs = main.fs;
+    this.recording = main.nes.debug.recording;
+    this.element.classList.add('recordings');
+    const top = child(this.element, 'div');
+    link(top, 'open', () => this.open());
+    text(top, ' ');
+    link(top, 'save', () => this.save());
+    text(top, ' ');
+    link(top, 'reset', () => main.nes.cpu.softReset());
+    this.name = child(this.element, 'input');
+    this.name.type = 'text';
+    const middle = child(this.element, 'div');
+    this.status = child(middle, 'span');
+    text(middle, ' ');
+    this.position = child(middle, 'span');
+    const bottom = child(this.element, 'div');
+    link(bottom, 'play', () => this.play());
+    text(bottom, ' ');
+    link(bottom, 'record', () => this.record());
+    text(bottom, ' ');
+    link(bottom, 'stop', () => this.stop());
+  }
+
+  async open() {
+    const picked = await this.fs.pick('Select movie');
+    this.name.value = picked.name;
+    this.recording.loadFile(picked.data);
+    this.frame();
+  }
+
+  save() {
+    this.fs.save(this.name.value, this.recording.saveFile());
+  }
+
+  play() {
+    this.recording.startPlayback();
+    this.status.textContent = 'playing';
+    this.frame();
+  }
+
+  record() {
+    this.recording.startRecording();
+    this.status.textContent = 'recording';
+    this.frame();
+  }
+
+  stop() {
+    this.recording.stop();
+    this.status.textContent = 'stopped';
+    this.frame();
+  }
+
+  frame() {
+    if (this.status.textContent == 'playing') {
+      const fraction = this.recording.index / this.recording.buffer.length;
+      this.position.textContent = `${(100 * fraction).toFixed(2)}%`;
+    } else {
+      this.position.textContent = `${this.recording.index} bytes`;
+    }      
+  }
+}

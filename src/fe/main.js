@@ -5,9 +5,10 @@ import {Speakers} from './speakers.js';
 import {GamepadController} from './gamepadcontroller.js';
 import {KeyboardController} from './keyboardcontroller.js';
 import {FrameTimer} from './frametimer.js';
-import {ChrRomViewer, PatternTableViewer, Trace, WatchPanel, WatchPage} from './debugger.js';
+import {ChrRomViewer, PatternTableViewer, Trace, WatchPanel, WatchPage, RecordingPane} from './debugger.js';
 import {Component} from './component.js';
 import {FileSystem} from './fs.js';
+import {Menu} from './menu.js';
 
 const bufferLog = () => {}; console.log.bind(console);
 
@@ -82,7 +83,7 @@ class Main {
 
     // window.addEventListener("resize", this.layout.bind(this));
     // this.layout();
-    this.load();
+    this.load(this.getHash('rom'));
   }
 
   setFrameSkip(skip) {
@@ -116,8 +117,7 @@ class Main {
     window.location.hash = '#' + components.join('&');
   }
 
-  async load() {
-    const romName = this.getHash('rom');
+  async load(romName = undefined) {
     if (romName) {
       const data = await this.fs.get(romName);
       if (data) {
@@ -133,6 +133,7 @@ class Main {
   }
 
   handleLoaded(name, data) {
+    if (this.running) this.stop();
     this.state.uiEnabled = true;
     this.state.running = true;
     this.state.loading = false;
@@ -203,8 +204,8 @@ class Main {
 
 let snapshot;
 window.main = new Main(document.getElementById('screen'));
-main.save = () => {snapshot = nes.cpu.snapshot();}; // q
-main.load = () => {nes.cpu.restore(snapshot);}; // w
+main.saveSnapshot = () => {snapshot = nes.cpu.snapshot();}; // q
+main.loadSnapshot = () => {nes.cpu.restore(snapshot);}; // w
 
 // TODO - save snapshots to local storage
 //   - consider also storing a screenshot along with?
@@ -224,14 +225,34 @@ main.track = (type) => {
   main.functions[86] = () => console.log(nes.debug.coverage.candidates(type, true)); // V (List)
 };
 
-const deepMap = (x, f) => {
-  if (typeof x[Symbol.iterator] == 'function') {
-    return Array.from(x, y => deepMap(y, f));
-  } else {
-    return f(x);
-  }
-};
-
 main.watch = (...addrs) => new WatchPanel(nes, ...addrs);
 
-main.watchPage = (page) => deepMap(page, p => new WatchPage(nes, p));
+const promptForNumbers = (text, callback) => {
+  const numbers = prompt(text);
+  if (!numbers) return;
+  const result = [];
+  // TODO(sdh): consider supporting ranges?
+  for (const num of numbers.split(/[^0-9a-fA-F$]+/)) {
+    result.push(
+        num.startsWith('$') ?
+            Number.parseInt(num.substring(1), 16) :
+            Number.parseInt(num, 10));
+  }
+  callback(result);
+};
+
+new Menu('File')
+    // TODO - file manager
+    .addItem('Load ROM', async () => main.load());
+new Menu('NES')
+    // TODO - hard reset (need to figure out how)
+    .addItem('Reset', () => main.nes.cpu.softReset());
+new Menu('Debug')
+    .addItem('Watch Page', () => promptForNumbers('Pages', pages => {
+      for (const page of pages) new WatchPage(main.nes, page);
+    }))
+    .addItem('Pattern Table', () => new PatternTableViewer(main.nes))
+    .addItem('CHR Viewer', () => promptForNumbers('Banks', banks => {
+      new ChrRomViewer(main.nes, banks);
+    }))
+    .addItem('Recording', () => new RecordingPane(main));

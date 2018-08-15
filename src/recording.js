@@ -65,7 +65,7 @@ export class Recording {
       button = 0;
     }
     if (this.buffer.length < this.index + 20) {
-      const newBuffer = new Uint8Array(this.buffer * 2);
+      const newBuffer = new Uint8Array(Math.max(0x1000, this.buffer * 2));
       newBuffer.set(this.buffer);
       this.buffer = newBuffer;
     }
@@ -139,13 +139,18 @@ export class Recording {
   }
 
   loadFile(buffer) {
+    if (!(buffer instanceof Uint8Array) &&
+        buffer.buffer instanceof ArrayBuffer) {
+      buffer = buffer.buffer;
+    }
+    if (buffer instanceof ArrayBuffer) buffer = new Uint8Array(buffer);
     this.buffer = buffer;
     this.index = this.buffer.length;
   }
 
   saveFile() {
     // return a trimmed buffer
-    return new Uint8Array(this.buffer.buffer, 0, this.index);
+    return this.buffer.slice(0, this.index);
   }
 
   startPlayback(index = 0) {
