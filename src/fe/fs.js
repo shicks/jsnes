@@ -143,7 +143,7 @@ export class FileSystem {
       if (!data.buffer instanceof ArrayBuffer) {
         throw new Error(`Not an ArrayBuffer: ${data}`);
       }
-      data = data.buffer;
+      data = data.slice().buffer;
     }
     const size = data.byteLength;
     return this.db.transaction(
