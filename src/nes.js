@@ -129,7 +129,7 @@ export class NES {
           ppu.scanline - 21 === ppu.spr0HitY
         ) {
           // Set sprite 0 hit flag:
-          ppu.setStatusFlag(ppu.STATUS_SPRITE0HIT, true);
+          ppu.setSprite0Hit();
         }
 
         if (ppu.requestEndFrame) {

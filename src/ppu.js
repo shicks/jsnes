@@ -1,6 +1,12 @@
 import {Tile} from './tile.js';
 import * as utils from './utils.js';
 
+// Status flags:
+const STATUS_VRAMWRITE = 0x10;
+const STATUS_SLSPRITECOUNT = 0x20;
+const STATUS_SPRITE0HIT = 0x40;
+const STATUS_VBLANK = 0x80;
+
 export function PPU(nes) {
   this.nes = nes;
 
@@ -31,11 +37,14 @@ export function PPU(nes) {
   this.f_spClipping = null;
   this.f_bgClipping = null;
   this.f_dispType = null;
+  this.status = null;
   this.cntFV = null;
   this.cntV = null;
   this.cntH = null;
   this.cntVT = null;
   this.cntHT = null;
+  this.reg1 = null;
+  this.reg2 = null;
   this.regFV = null;
   this.regV = null;
   this.regH = null;
@@ -82,12 +91,6 @@ export function PPU(nes) {
 };
 
 PPU.prototype = {
-  // Status flags:
-  STATUS_VRAMWRITE: 4,
-  STATUS_SLSPRITECOUNT: 5,
-  STATUS_SPRITE0HIT: 6,
-  STATUS_VBLANK: 7,
-
   reset: function() {
     var i;
 
@@ -133,6 +136,7 @@ PPU.prototype = {
     this.f_spClipping = 0; // Sprite clipping. 0=Sprites invisible in left 8-pixel column,1=No clipping
     this.f_bgClipping = 0; // Background clipping. 0=BG invisible in left 8-pixel column, 1=No clipping
     this.f_dispType = 0; // Display type. 0=color, 1=monochrome
+    this.status = 0; // Status flag.
 
     // Counters:
     this.cntFV = 0;
@@ -336,10 +340,10 @@ PPU.prototype = {
 
       case 20:
         // Clear VBlank flag:
-        this.setStatusFlag(this.STATUS_VBLANK, false);
+        this.status &= ~STATUS_VBLANK;
 
         // Clear Sprite #0 hit flag:
-        this.setStatusFlag(this.STATUS_SPRITE0HIT, false);
+        this.status &= ~STATUS_SPRITE0HIT;
         this.hitSpr0 = false;
         this.spr0HitX = -1;
         this.spr0HitY = -1;
@@ -372,7 +376,7 @@ PPU.prototype = {
       case 261:
         // Dead scanline, no rendering.
         // Set VINT:
-        this.setStatusFlag(this.STATUS_VBLANK, true);
+        this.status |= STATUS_VBLANK;
         this.requestEndFrame = true;
         this.nmiCounter = 9;
 
@@ -559,6 +563,7 @@ PPU.prototype = {
     this.regV = (value >> 1) & 1;
     this.regH = value & 1;
     this.regS = (value >> 4) & 1;
+    this.reg1 = value;
   },
 
   updateControlReg2: function(value) {
@@ -575,27 +580,23 @@ PPU.prototype = {
       this.palTable.setEmphasis(this.f_color);
     }
     this.updatePalettes();
-  },
-
-  setStatusFlag: function(flag, value) {
-    var n = 1 << flag;
-    this.nes.cpu.mem[0x2002] =
-      (this.nes.cpu.mem[0x2002] & (255 - n)) | (value ? n : 0);
+    this.reg2 = value;
   },
 
   // CPU Register $2002:
   // Read the Status Register.
   readStatusRegister: function() {
-    var tmp = this.nes.cpu.mem[0x2002];
-
     // Reset scroll & VRAM Address toggle:
     this.firstWrite = true;
 
+    // Save result before clearing vblank:
+    const status = this.status;
+
     // Clear VBlank flag:
-    this.setStatusFlag(this.STATUS_VBLANK, false);
+    this.status &= ~STATUS_VBLANK;
 
     // Fetch status data:
-    return tmp;
+    return status;
   },
 
   // CPU Register $2003:
@@ -1292,6 +1293,10 @@ PPU.prototype = {
     return false;
   },
 
+  setSprite0Hit: function() {
+    this.status |= STATUS_SPRITE0HIT;
+  },
+
   // This will write to PPU memory, and
   // update internally buffered data
   // appropriately.
@@ -1420,7 +1425,7 @@ PPU.prototype = {
 
   doNMI: function() {
     // Set VBlank flag:
-    this.setStatusFlag(this.STATUS_VBLANK, true);
+    this.status |= STATUS_VBLANK;
     //nes.getCpu().doNonMaskableInterrupt();
     this.nes.cpu.requestIrq(this.nes.cpu.IRQ_NMI);
   },
@@ -1441,6 +1446,8 @@ PPU.prototype = {
     "cntVT",
     "cntHT",
     // Registers
+    "reg1",
+    "reg2",
     "regFV",
     "regV",
     "regH",
@@ -1464,6 +1471,7 @@ PPU.prototype = {
     "f_spClipping",
     "f_bgClipping",
     "f_dispType",
+    "status",
     // VRAM I/O
     "vramBufferedReadValue",
     "firstWrite",

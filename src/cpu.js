@@ -1154,6 +1154,7 @@ CPU.prototype = {
       this.nes.mmap.write(addr, val);
     }
     if (this.nes.battery && (addr & 0xe000) == 0x6000) {
+      // TODO - remove this to the mapper...?
       this.nes.battery.store(addr);
     }
     if (opt_log) this.nes.debug.logMem(Debug.MEM_WR, addr, val);

@@ -1,9 +1,148 @@
 import * as utils from '../utils.js';
 
-// Mapper 0
+const countBits = (mask) => {
+  let count = 0;
+  while (mask) {
+    if (!(mask & 1)) throw new Error('Invalid mask');
+    mask >>>= 1;
+    count++;
+  }
+  return count;
+};
+
+/** Mask for a PRG bank. */
+export const PRG_BANK_MASK = 0x7ff;
+/** Bits in a PRG bank. */
+export const PRG_BANK_SIZE = countBits(PRG_BANK_MASK);
+
+// TODO - CHR banks?
+
+const NULL_READ = () => 0;
+const NULL_WRITE = () => {};
+
+// Mapper 0 - base class for all others.
 export class NROM {
   constructor(nes) {
     this.nes = nes;
+    this.joy1StrobeState = 0;
+    this.joy2StrobeState = 0;
+    this.joypadLastWrite = 0;
+    this.zapperFired = false;
+    this.zapperX = null;
+    this.zapperY = null;
+
+    // Battery-backed RAM, if any.  If non-null, will be backed up
+    // across resets.  Should be a view of a subset of RAM.
+    // TODO - this is probably just a method?
+    this.battery = null;
+    // Included verbatim in snapshots.
+    this.ram = null;
+    // Array of Uint8Arrays and ordinary Arrays of functions.  When
+    // taking snapshot, the source (ram or rom) and the offset are
+    // recorded.
+    this.prgBanks = [];
+
+    // Memory mapping.  Lower 8 bits is an index into a banks variable.
+    // The length of the bank must be a power of two and is used to mask
+    // out irrelevant offsets.  These are initialized once in initialize()
+    // and never mutated.  The banks may contain functions, which will be
+    // used as appropriate.
+    this.prgRead = new Uint16Array(0x10000);
+    this.prgWrite = new Uint16Array(0x10000);
+   }
+
+  // Helper method for implementing initializeRegisters.
+  onloadWrite(registers) {
+    return {
+      onLoad(reg, getter) {
+        registers[reg] = registers[reg] || {load: NULL_READ, write: NULL_WRITE};
+        registers[reg].load = getter;
+      },
+      onWrite(reg, setter) {
+        registers[reg] = registers[reg] || {load: NULL_READ, write: NULL_WRITE};
+        registers[reg].write = setter;
+      },
+    };
+  }
+
+  // Helper method for implementing initializeRegisters.
+  mirror(array, start, end, mirrorEnd) {
+    for (let addr = end; addr < mirrorEnd; addr++) {
+      array[addr] = array[start + ((addr - start) % (end - start))];
+    }
+  }
+
+  initializePrgRam(registers) {
+    // May be overridden by mappers that have PRG RAM paging.
+    // TODO - may need to rethink ordering wrt. loading from disk and clobbering
+    this.prgRam = new Uint8Array(0x2000);
+    for (let address = 0x6000; address < 0x8000; address++) {
+      const prgRamAddr = address & 0x1fff;
+      onLoad(address, () => this.prgRam[prgRamAddr]);
+      onWrite(address, (value) => {
+        this.prgRam[prgRamAddr] = value;
+        this.nes.opts.onBatteryRamWrite(address, value);
+      });
+    }
+  }
+
+  initializeBanks() {
+    this.prgBanks.add
+  }
+
+  // Overridable method for special handling of certain read/writes.
+  initializeRegisters(registers) {
+    const {onLoad, onWrite} = this.onLoadWrite(registers);
+    // ==== Set up APU Registers ====
+    // Note: 0x4014 and 0x4016 are not APU registers and will be overwritten
+    // later in this function.
+    const apuWrite = (value) => this.nes.papu.writeReg(address, value);
+    for (let address = 0x4000; address <= 0x4017; address++) {
+      onWrite(address, apuWrite);
+    }
+    // APU Status
+    onLoad(0x4015, () => this.nes.papu.readReg(0x4015));
+
+    // ==== Set up PPU Registers ====
+    // PPUCTRL (PPU Control Register 1)
+    onLoad(0x2000, () => this.nes.ppu.reg1);
+    onWrite(0x2000, (value) => this.nes.ppu.updateControlReg1(value));
+    // PPUMASK (PPU Control Register 2)
+    onLoad(0x2001, () => this.nes.ppu.reg2);
+    onWrite(0x2001, (value) => this.nes.ppu.updateControlReg2(value));
+    // PPUSTATUS (PPU Status Register)
+    onLoad(0x2002, () => this.nes.ppu.readStatusRegister());
+    // OAMADDR (Sprite RAM address)
+    onWrite(0x2003, (value) => this.nes.ppu.writeSRAMAddress(value));
+    // OAMDATA (Sprite memory read/write)
+    onLoad(0x2004, () => this.nes.ppu.sramLoad());
+    onWrite(0x2004, (value) => this.nes.ppu.sramWrite(value));
+    // PPUSCROLL (Screen scroll offsets)
+    onWrite(0x2005, (value) => this.nes.ppu.scrollWrite(value));
+    // PPUADDR (VRAM address)
+    onWrite(0x2006, (value) => this.nes.ppu.writeVRAMAddress(value));
+    // PPUDATA (VRAM read/write)
+    onLoad(0x2007, () => this.nes.ppu.vramLoad());
+    onWrite(0x2007, (value) => this.nes.ppu.vramWrite(value));
+    // OAMDMA (Sprite memory DMA access)
+    onWrite(0x4014, (value) => this.nes.ppu.sramDMA(value));
+    // Mirrors
+    this.mirror(registers, 0x2000, 0x2008, 0x4000);
+    
+    // ==== Joystick ====
+    onWrite(0x4016, (value) => this.writeJoystickStrobe(value));
+    onLoad(0x4016, () => this.joy1Read());
+    // Joystick 2 + Strobe - 
+    onLoad(0x4017, () => this.joy2ReadWithZapper());
+
+    // ==== RAM Mirroring ====
+    for (let address = 0x800; address < 0x2000; address++) {
+      const mirrored = address & 0x7ff;
+      onLoad(address, () => this.nes.cpu.mem[mirrored]);
+      onWrite(address, (value) => this.nes.cpu.mem[mirrored] = value);
+    }
+
+    // ==== Battery ====
   }
 
   reset() {
@@ -16,29 +155,27 @@ export class NROM {
     this.zapperY = null;
   }
 
+  // New plan:
+  //   rewrite all reads/writes of mem[x] to mem[x >> PRG_BANK_SIZE][x & PRG_BANK_MASK]
+  //   bank switching is just copying a few array refs
+  //   mirroring is just copying the same ref
+  //   registers are just getters/setters on some special non-array banks
+  //   add an extra (1<<PRG_BANK_SIZE) element to the bank to keep track of where
+  //     it came from?
+  // problem - simply copying in the banks is not quite right, since they need
+  // different write behaviors depending on where they are.  instead, do a getter
+  // indirection where paged roms' getters look up the current bank and return that.
+
   write(address, value) {
     if (address < 0x2000) {
       // Mirroring of RAM:
       this.nes.cpu.mem[address & 0x7ff] = value;
-    } else if (address > 0x4017) {
+    } else if (address > 0x4017 && address < 0x8000) {
       this.nes.cpu.mem[address] = value;
       if (address >= 0x6000 && address < 0x8000) {
         // Write to persistent RAM
         this.nes.opts.onBatteryRamWrite(address, value);
       }
-    } else if (address > 0x2007 && address < 0x4000) {
-      this.regWrite(0x2000 + (address & 0x7), value);
-    } else {
-      this.regWrite(address, value);
-    }
-  }
-
-  writelow(address, value) {
-    if (address < 0x2000) {
-      // Mirroring of RAM:
-      this.nes.cpu.mem[address & 0x7ff] = value;
-    } else if (address > 0x4017) {
-      this.nes.cpu.mem[address] = value;
     } else if (address > 0x2007 && address < 0x4000) {
       this.regWrite(0x2000 + (address & 0x7), value);
     } else {
@@ -63,212 +200,23 @@ export class NROM {
     }
   }
 
-  regLoad(address) {
-    switch (
-      address >> 12 // use fourth nibble (0xF000)
-    ) {
-      case 0:
-        break;
-
-      case 1:
-        break;
-
-      case 2:
-      // Fall through to case 3
-      case 3:
-        // PPU Registers
-        switch (address & 0x7) {
-          case 0x0:
-            // 0x2000:
-            // PPU Control Register 1.
-            // (the value is stored both
-            // in main memory and in the
-            // PPU as flags):
-            // (not in the real NES)
-            return this.nes.cpu.mem[0x2000];
-
-          case 0x1:
-            // 0x2001:
-            // PPU Control Register 2.
-            // (the value is stored both
-            // in main memory and in the
-            // PPU as flags):
-            // (not in the real NES)
-            return this.nes.cpu.mem[0x2001];
-
-          case 0x2:
-            // 0x2002:
-            // PPU Status Register.
-            // The value is stored in
-            // main memory in addition
-            // to as flags in the PPU.
-            // (not in the real NES)
-            return this.nes.ppu.readStatusRegister();
-
-          case 0x3:
-            return 0;
-
-          case 0x4:
-            // 0x2004:
-            // Sprite Memory read.
-            return this.nes.ppu.sramLoad();
-          case 0x5:
-            return 0;
-
-          case 0x6:
-            return 0;
-
-          case 0x7:
-            // 0x2007:
-            // VRAM read:
-            return this.nes.ppu.vramLoad();
-        }
-        break;
-      case 4:
-        // Sound+Joypad registers
-        switch (address - 0x4015) {
-          case 0:
-            // 0x4015:
-            // Sound channel enable, DMC Status
-            return this.nes.papu.readReg(address);
-
-          case 1:
-            // 0x4016:
-            // Joystick 1 + Strobe
-            return this.joy1Read();
-
-          case 2:
-            // 0x4017:
-            // Joystick 2 + Strobe
-            // https://wiki.nesdev.com/w/index.php/Zapper
-            var w;
-
-            if (
-              this.zapperX !== null &&
-              this.zapperY !== null &&
-              this.nes.ppu.isPixelWhite(this.zapperX, this.zapperY)
-            ) {
-              w = 0;
-            } else {
-              w = 0x1 << 3;
-            }
-
-            if (this.zapperFired) {
-              w |= 0x1 << 4;
-            }
-            return (this.joy2Read() | w) & 0xffff;
-        }
-        break;
+  writeJoystickStrobe(value) {
+    // Joystick 1 + Strobe
+    if ((value & 1) === 0 && (this.joypadLastWrite & 1) === 1) {
+      this.joy1StrobeState = 0;
+      this.joy2StrobeState = 0;
     }
-    return 0;
-  }
-
-  regWrite(address, value) {
-    switch (address) {
-      case 0x2000:
-        // PPU Control register 1
-        this.nes.cpu.mem[address] = value;
-        this.nes.ppu.updateControlReg1(value);
-        break;
-
-      case 0x2001:
-        // PPU Control register 2
-        this.nes.cpu.mem[address] = value;
-        this.nes.ppu.updateControlReg2(value);
-        break;
-
-      case 0x2003:
-        // Set Sprite RAM address:
-        this.nes.ppu.writeSRAMAddress(value);
-        break;
-
-      case 0x2004:
-        // Write to Sprite RAM:
-        this.nes.ppu.sramWrite(value);
-        break;
-
-      case 0x2005:
-        // Screen Scroll offsets:
-        this.nes.ppu.scrollWrite(value);
-        break;
-
-      case 0x2006:
-        // Set VRAM address:
-        this.nes.ppu.writeVRAMAddress(value);
-        break;
-
-      case 0x2007:
-        // Write to VRAM:
-        this.nes.ppu.vramWrite(value);
-        break;
-
-      case 0x4014:
-        // Sprite Memory DMA Access
-        this.nes.ppu.sramDMA(value);
-        break;
-
-      case 0x4015:
-        // Sound Channel Switch, DMC Status
-        this.nes.papu.writeReg(address, value);
-        break;
-
-      case 0x4016:
-        // Joystick 1 + Strobe
-        if ((value & 1) === 0 && (this.joypadLastWrite & 1) === 1) {
-          this.joy1StrobeState = 0;
-          this.joy2StrobeState = 0;
-        }
-        this.joypadLastWrite = value;
-        break;
-
-      case 0x4017:
-        // Sound channel frame sequencer:
-        this.nes.papu.writeReg(address, value);
-        break;
-
-      default:
-        // Sound registers
-        // console.log("write to sound reg");
-        if (address >= 0x4000 && address <= 0x4017) {
-          this.nes.papu.writeReg(address, value);
-        }
-    }
+    this.joypadLastWrite = value;
   }
 
   joy1Read() {
-    var ret;
+    let ret;
 
-    switch (this.joy1StrobeState) {
-      case 0:
-      case 1:
-      case 2:
-      case 3:
-      case 4:
-      case 5:
-      case 6:
-      case 7:
-        ret = this.nes.controllers[1].state[this.joy1StrobeState];
-        break;
-      case 8:
-      case 9:
-      case 10:
-      case 11:
-      case 12:
-      case 13:
-      case 14:
-      case 15:
-      case 16:
-      case 17:
-      case 18:
-        ret = 0;
-        break;
-      case 19:
-        ret = 1;
-        break;
-      default:
-        ret = 0;
+    if (this.joy1StrobeState < 8) {
+      ret = this.nes.controllers[1].state[this.joy1StrobeState];
+    } else {
+      ret = this.joy1StrobeState == 19 ? 1 : 0;
     }
-
     this.joy1StrobeState++;
     if (this.joy1StrobeState === 24) {
       this.joy1StrobeState = 0;
@@ -278,37 +226,12 @@ export class NROM {
   }
 
   joy2Read() {
-    var ret;
+    let ret;
 
-    switch (this.joy2StrobeState) {
-      case 0:
-      case 1:
-      case 2:
-      case 3:
-      case 4:
-      case 5:
-      case 6:
-      case 7:
-        ret = this.nes.controllers[2].state[this.joy2StrobeState];
-        break;
-      case 8:
-      case 9:
-      case 10:
-      case 11:
-      case 12:
-      case 13:
-      case 14:
-      case 15:
-      case 16:
-      case 17:
-      case 18:
-        ret = 0;
-        break;
-      case 19:
-        ret = 1;
-        break;
-      default:
-        ret = 0;
+    if (this.joy2StrobeState < 8) {
+      ret = this.nes.controllers[2].state[this.joy2StrobeState];
+    } else {
+      ret = this.joy2StrobeState == 19 ? 1 : 0;
     }
 
     this.joy2StrobeState++;
@@ -317,6 +240,22 @@ export class NROM {
     }
 
     return ret;
+  }
+
+  joy2ReadWithZapper() {
+    // https://wiki.nesdev.com/w/index.php/Zapper
+    let w;
+    if (this.zapperX !== null &&
+        this.zapperY !== null &&
+        this.nes.ppu.isPixelWhite(this.zapperX, this.zapperY)) {
+      w = 0;
+    } else {
+      w = 0x8;
+    }
+    if (this.zapperFired) {
+      w |= 0x10;
+    }
+    return (this.joy2Read() | w) & 0xffff;
   }
 
   loadROM() {

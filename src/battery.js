@@ -28,7 +28,7 @@ export class Battery {
       utils.copyArrayElements(this.nes.cpu.mem, 0x6000, arr, 0, 0x2000);
       const str = String.fromCharCode(...arr);
       localStorage.setItem(this.nes.rom.hash, str);
-    }, 1000); // wait roughly three frames
+    }, 1000); // wait a second before writing
   }
 
   reset() {
