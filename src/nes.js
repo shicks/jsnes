@@ -244,7 +244,7 @@ export class NES {
 
   saveSnapshot() {
     const w = new BinaryWriter();
-    w.writeStringFixed('NST\x1a');
+    w.writeStringFixed('NES-STA\x1a');
     // don't actually store the ROM, though we'll get it somewhat
     // with the memory.  We should consider cleaning up how memory
     // mapping is done.

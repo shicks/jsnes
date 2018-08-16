@@ -200,14 +200,13 @@ ROM.prototype = {
   createMapper: function() {
     if (this.mapperSupported()) {
       return new Mappers[this.mapperType](this.nes);
-    } else {
-      throw new Error(
-        "This ROM uses a mapper not supported by JSNES: " +
-          this.getMapperName() +
-          "(" +
-          this.mapperType +
-          ")"
-      );
     }
+    throw new Error(
+      "This ROM uses a mapper not supported by JSNES: " +
+        this.getMapperName() +
+        "(" +
+        this.mapperType +
+        ")"
+    );
   }
 };
