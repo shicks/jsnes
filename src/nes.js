@@ -156,15 +156,17 @@ export class NES {
   }
 
   buttonDown(controller, button) {
-    this.controllers[controller].buttonDown(button);
-    if (this.debug && this.debug.recording) {
+    if (this.controllers[controller].buttonDown(button) &&
+        this.debug &&
+        this.debug.recording) {
       this.debug.recording.record({controller, button, pressed: true});
     }
   }
 
   buttonUp(controller, button) {
-    this.controllers[controller].buttonUp(button);
-    if (this.debug && this.debug.recording) {
+    if (this.controllers[controller].buttonUp(button) &&
+        this.debug &&
+        this.debug.recording) {
       this.debug.recording.record({controller, button, pressed: false});
     }
   }

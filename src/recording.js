@@ -32,6 +32,14 @@
 // In particular, while replaying if I take a snapshot it should include the
 // state of the replay.
 
+// TODO - need a way to continue recordings
+//   -- auto-stop at end of playback/record could help things, assuming no OBO errors
+//   -- consider adding snapshots (i.e. keyframes) into the mix
+//      would allow resyncing
+//   -- could put together a multi-session full playthrough, with keyframes every few
+//      minutes to ensure quick navigation.
+
+
 const MODE_REC = 'rec';
 const MODE_PLAY = 'play';
 
@@ -72,6 +80,9 @@ export class Recording {
     let frame = this.frame + 1;
     this.frame = 0;
     let continued = frame > 7 || controller ? 0x80 : 0;
+
+    console.log(`record ctrl ${controller} btn ${button} pressed ${pressed}`);
+
     // first byte
     this.buffer[this.index++] = continued | ((frame & 7) << 4) | button;
     if (!continued) return;
