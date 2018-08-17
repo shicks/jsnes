@@ -8,12 +8,11 @@ import {NROM} from './nrom.js';
  * @constructor
  */
 export class BNROM extends NROM {
-  write(address, value) {
-    if (address < 0x8000) {
-      super.write(address, value);
-      return;
-    } else {
-      this.load32kRomBank(value, 0x8000);
-    }
+  initializeRegisters() {
+    super.initializeRegisters();
+    this.addRegisterBank('w', 0x8000, 0x10000, 1);
+    this.onWrite(0x8000, (value) => {
+      this.loadPrgPage(0x8000, value, 0x8000);
+    });
   }
 }

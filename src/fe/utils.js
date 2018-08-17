@@ -15,7 +15,7 @@ export const text = (parent, text) => {
 export const link = (parent, text, handler) => {
   const link = child(parent, 'a');
   link.textContent = text;
-  link.href = '#';
+  link.href = '#'; // TODO - this is causing problems
   link.addEventListener('click', handler);
   return link;
 };

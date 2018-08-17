@@ -5,7 +5,6 @@ export function CPU(nes) {
   this.nes = nes;
 
   // Keep Chrome happy
-  this.mem = null;
   this.REG_ACC = null;
   this.REG_X = null;
   this.REG_Y = null;
@@ -43,7 +42,6 @@ CPU.prototype = {
   snapshot: function() {
     // return an object that can be restored, includes all mem, etc
     return {
-      mem: this.mem.slice(),
       REG_ACC: this.REG_ACC,
       REG_X: this.REG_X,
       REG_Y: this.REG_Y,
@@ -70,7 +68,6 @@ CPU.prototype = {
   },
 
   restore: function(snapshot) {
-    this.mem = snapshot.mem.slice();
     this.REG_ACC = snapshot.REG_ACC;
     this.REG_X = snapshot.REG_X;
     this.REG_Y = snapshot.REG_Y;
@@ -96,23 +93,6 @@ CPU.prototype = {
   },
 
   reset: function() {
-    // Main memory
-    this.mem = new Array(0x10000);
-
-    for (var i = 0; i < 0x2000; i++) {
-      this.mem[i] = 0xff;
-    }
-    for (var p = 0; p < 4; p++) {
-      var j = p * 0x800;
-      this.mem[j + 0x008] = 0xf7;
-      this.mem[j + 0x009] = 0xef;
-      this.mem[j + 0x00a] = 0xdf;
-      this.mem[j + 0x00f] = 0xbf;
-    }
-    for (var k = 0x2001; k < this.mem.length; k++) {
-      this.mem[k] = 0;
-    }
-
     // CPU Registers:
     this.REG_ACC = 0;
     this.REG_X = 0;
@@ -336,15 +316,10 @@ CPU.prototype = {
         // Indirect Absolute mode. Find the 16-bit address contained
         // at the given location.
         const a = this.load16bit(opaddr + 2); // Find op
-        if (a < 0x1fff) {
-          addr =
-            this.mem[a] +
-            (this.mem[(a & 0xff00) | (((a & 0xff) + 1) & 0xff)] << 8); // Read from address given in op
-        } else {
-          addr =
+        // Read from address given in op
+        addr =
             this.nes.mmap.load(a) +
             (this.nes.mmap.load((a & 0xff00) | (((a & 0xff) + 1) & 0xff)) << 8);
-        }
         this.nes.debug.logMem(Debug.MEM_RD16, a, addr);
         logmem = true;
         break;
@@ -1123,40 +1098,19 @@ CPU.prototype = {
   },
 
   load: function(addr, opt_log) {
-    let result;
-    if (addr < 0x2000) {
-      addr &= 0x7ff;
-      result = this.mem[addr];
-    } else {
-      result = this.nes.mmap.load(addr);
-    }
+    const result = this.nes.mmap.load(addr);
     if (opt_log) this.nes.debug.logMem(Debug.MEM_RD, addr, result);
     return result;
   },
 
   load16bit: function(addr, opt_log) {
-    let result;
-    if (addr < 0x1fff) {
-      addr &= 0x7ff;
-      result = this.mem[addr] | (this.mem[(addr + 1) & 0x7ff] << 8);
-    } else {
-      result = this.nes.mmap.load(addr) | (this.nes.mmap.load(addr + 1) << 8);
-    }
+    const result = this.nes.mmap.load(addr) | (this.nes.mmap.load(addr + 1) << 8);
     if (opt_log) this.nes.debug.logMem(Debug.MEM_RD16, addr, result);
     return result;
   },
 
   write: function(addr, val, opt_log) {
-    if (addr < 0x2000) {
-      addr &= 0x7ff;
-      this.mem[addr] = val;
-    } else {
-      this.nes.mmap.write(addr, val);
-    }
-    if (this.nes.battery && (addr & 0xe000) == 0x6000) {
-      // TODO - remove this to the mapper...?
-      this.nes.battery.store(addr);
-    }
+    this.nes.mmap.write(addr, val);
     if (opt_log) this.nes.debug.logMem(Debug.MEM_WR, addr, val);
   },
 

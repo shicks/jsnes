@@ -56,8 +56,6 @@ export class NES {
     this.zapperFireDown = this.zapperFireDown.bind(this);
     this.zapperFireUp = this.zapperFireUp.bind(this);
 
-    // which 8k bank is in each $2000-long segment
-    this.banks = new Array(8);
     // for logging, etc
     this.debug = new Debug(this);
     this.breakpointCycles = null;

@@ -139,7 +139,7 @@ class Main {
     this.state.loading = false;
     this.romName = name;
     this.nes.loadROM(new Uint8Array(data));
-    this.start();
+    //this.start();
   }
 
   start() {

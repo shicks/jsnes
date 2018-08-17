@@ -72,8 +72,6 @@ ROM.prototype = {
   vrom: null,
   vromTile: null,
 
-  romCount: null,
-  vromCount: null,
   mirroring: null,
   batteryRam: null,
   trainer: null,
@@ -82,19 +80,17 @@ ROM.prototype = {
   valid: false,
 
   load: function(data) {
-    var i, j, v;
-
     if (data[0] != 0x4e || data[1] != 0x45 ||
         data[2] != 0x53 || data[3] != 0x1a) {
       // Needs to start with 'NES\x1a'.
       throw new Error("Not a valid NES ROM.");
     }
     this.header = new Array(16);
-    for (i = 0; i < 16; i++) {
+    for (let i = 0; i < 16; i++) {
       this.header[i] = data[i];
     }
-    this.romCount = this.header[4];
-    this.vromCount = this.header[5] * 2; // Get the number of 4kB banks, not 8kB
+    const romCount = this.header[4];
+    const vromCount = this.header[5] * 2; // Get the number of 4kB banks, not 8kB
     this.mirroring = (this.header[6] & 1) !== 0 ? 1 : 0;
     this.batteryRam = (this.header[6] & 2) !== 0;
     this.trainer = (this.header[6] & 4) !== 0;
@@ -103,48 +99,44 @@ ROM.prototype = {
 
     // Check whether byte 8-15 are zero's:
     var foundError = false;
-    for (i = 8; i < 16; i++) {
+    for (let i = 8; i < 16; i++) {
       if (this.header[i] !== 0) {
         foundError = true;
         break;
       }
     }
+
     if (foundError) {
       this.mapperType &= 0xf; // Ignore byte 7
     }
     // Load PRG-ROM banks:
-    this.rom = new Array(this.romCount);
-    var offset = 16;
-    for (i = 0; i < this.romCount; i++) {
-      this.rom[i] = new Array(16384);
-      for (j = 0; j < 16384; j++) {
-        if (offset + j >= data.length) {
-          break;
-        }
-        const x = this.rom[i][j] = data[offset + j];
-        this.hash = ((this.hash * 31 >>> 0) + x) >>> 0;
+    const romBytes = romCount << 14;
+    const romStart = 16; // after header
+    this.rom = new Uint8Array(romBytes);
+    for (let i = 0; i < romBytes; i++) {
+      if (romStart + i >= data.length) {
+        break;
       }
-      offset += 16384;
+      const x = this.rom[i] = data[romStart + i];
+      this.hash = ((this.hash * 31 >>> 0) + x) >>> 0;
     }
     // Load CHR-ROM banks:
-    this.vrom = new Array(this.vromCount);
-    for (i = 0; i < this.vromCount; i++) {
-      this.vrom[i] = new Array(4096);
-      for (j = 0; j < 4096; j++) {
-        if (offset + j >= data.length) {
-          break;
-        }
-        const x = this.vrom[i][j] = data[offset + j];
-        this.hash = ((this.hash * 31 >>> 0) + x) >>> 0;
+    const vromStart = romStart + romBytes;
+    const vromBytes = vromCount << 12;
+    this.vrom = new Uint8Array(vromBytes);
+    for (let i = 0; i < vromBytes; i++) {
+      if (vromStart + i >= data.length) {
+        break;
       }
-      offset += 4096;
+      const x = this.vrom[i] = data[vromStart + i];
+      this.hash = ((this.hash * 31 >>> 0) + x) >>> 0;
     }
 
     // Create VROM tiles:
-    this.vromTile = new Array(this.vromCount);
-    for (i = 0; i < this.vromCount; i++) {
+    this.vromTile = new Array(vromCount);
+    for (let i = 0; i < vromCount; i++) {
       this.vromTile[i] = new Array(256);
-      for (j = 0; j < 256; j++) {
+      for (let j = 0; j < 256; j++) {
         this.vromTile[i][j] = new Tile();
       }
     }
@@ -152,21 +144,21 @@ ROM.prototype = {
     // Convert CHR-ROM banks to tiles:
     var tileIndex;
     var leftOver;
-    for (v = 0; v < this.vromCount; v++) {
-      for (i = 0; i < 4096; i++) {
+    for (let v = 0; v < vromCount; v++) {
+      for (let i = 0; i < 4096; i++) {
         tileIndex = i >> 4;
         leftOver = i % 16;
         if (leftOver < 8) {
           this.vromTile[v][tileIndex].setScanline(
             leftOver,
-            this.vrom[v][i],
-            this.vrom[v][i + 8]
+            this.vrom[(v << 12) | i],
+            this.vrom[(v << 12) | (i + 8)]
           );
         } else {
           this.vromTile[v][tileIndex].setScanline(
             leftOver - 8,
-            this.vrom[v][i - 8],
-            this.vrom[v][i]
+            this.vrom[(v << 12) | (i - 8)],
+            this.vrom[(v << 12) | i]
           );
         }
       }
@@ -174,6 +166,20 @@ ROM.prototype = {
 
     this.valid = true;
     this.hash = this.hash.toString(36);
+  },
+
+  prgPage: function(page, size) {
+    if (page < 0) page = Math.floor(this.rom.length / size) + page;
+    const offset = page * size % (this.rom.length & ~(size - 1));
+    return this.rom.subarray(offset, offset + size);
+  },
+
+  vromCount: function(size = 0x1000) {
+    return Math.floor(this.vrom.length / size);
+  },
+
+  romCount: function(size = 0x4000) {
+    return Math.floor(this.rom.length / size);
   },
 
   getMirroringType: function() {

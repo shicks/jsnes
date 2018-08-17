@@ -27,14 +27,14 @@ import {Recording} from './recording.js';
 //   next 6 bits are other flags, dependent on the type
 // CPU instruction:
 //   [00000p01] [ opcode ] [ pclow  ] [ pchigh ] [ page?  ]
-//   p = PC is paged, enables 5th byte
+//   p = PC is paged, enables 5th and 6th byte
 //   // ss = number of bytes in instruction (1-3)
 //   opcode = opcode executed
 //   pc = address opcode was read from (little endian)
 //   page = optional page index (if p == 1)
 // Memory:
 //   [00wrsp10] [ addrlo ] [ addrhi ] [ page?  ] [ read?  ] [readhi? ] [ write? ]
-//   p = address was paged, enables page? byte
+//   p = address was paged, enables page? bytes
 //   s = 16-bit read, enables valhi? byte
 //   r = whether this is a read
 //   w = whether this is a write
@@ -141,9 +141,9 @@ export class Debug {
 
     // If we've gotten to this point then we're not ignoring anything.
     this.lastPc = pc;
-    const bank = this.nes.banks[pc >>> 13];
-    const addr =
-        bank != null ? (bank << 13) | (pc & 0x1fff) : pc < 0x2000 ? pc & 0x7ff : pc;
+    const bank = this.nes.mmap.prgRomBank(pc);
+    const addr = bank != null ? this.nes.mmap.prgRomAddress(bank, pc) :
+          pc < 0x2000 ? pc & 0x7ff : pc;
     if (bank != null) {
       this.origin.logCpu(opcode, addr);
     } else {
@@ -189,9 +189,8 @@ export class Debug {
 
   logMem(op, address, value, write = -1) {
     if (this.holding.holding) return;
-    const bank = op & MEM_READ ? this.nes.banks[address >>> 13] : null;
-    const addr =
-        bank != null ? (bank << 13) | (address & 0x1fff) :
+    const bank = op & MEM_READ ? this.nes.mmap.prgRomBank(address) : null;
+    const addr = bank != null ? this.nes.mmap.prgRomAddress(bank, address) :
             address < 0x2000 ? address & 0x7ff : address;
     this.coverage.cov[addr] |= (bank != null ? BREAK_PRG_R :
                                 (op & MEM_READ ? BREAK_RAM_R : 0) |
@@ -298,9 +297,9 @@ export class Debug {
   }
 
   banked(addr) {
-    const bank = this.nes.banks[addr >>> 13];
+    const bank = this.nes.mmap.prgRomBank(addr);
     return bank != null ?
-        '$' + ((addr & 0x1fff) | (bank << 13)).toString(16).padStart(5, 0) :
+        '$' + this.nes.mmap.prgRomAddress(bank, addr).toString(16).padStart(5, 0) :
         '$' + addr.toString(16).padStart(4, 0);
   }
 
@@ -364,7 +363,7 @@ export class Debug {
         const op = this.buffer[--pos];
         const addr = this.buffer[--pos] | (this.buffer[--pos] << 8);
         const romaddr =
-            selector & PAGED ? (addr & 0x1fff) | (this.buffer[--pos] << 13) : null;
+            selector & PAGED ? this.nes.mmap.prgRomAddress(this.buffer[--pos], addr) : null;
 
 if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, 5).map(x=>x.toString(16)), addr, romaddr);
 
@@ -374,7 +373,7 @@ if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, 5).map(x=>x.toString(16)
       case 2: { // mem
         const addr = this.buffer[--pos] | (this.buffer[--pos] << 8);
         const romaddr =
-            selector & PAGED ? (addr & 0x1fff) | (this.buffer[--pos] << 13) : null;
+            selector & PAGED ? this.nes.mmap.prgRomAddress(this.buffer[--pos], addr) : null;
         const read =
             selector & MEM_READ ?
                 this.buffer[--pos] |
@@ -434,7 +433,7 @@ console.log('BAD!');
 debugger;
 return;
 }
-            const a = this.nes.rom.rom[romaddr >> 14][romaddr & 0x3fff];
+            const a = this.nes.rom.rom[romaddr];
             bytes.push(a);
             arg += (a << factor);
             factor += 8;
@@ -475,13 +474,13 @@ return;
 
   nextInstruction() {
     const addr = this.nes.cpu.REG_PC + 1;
-    const op = this.nes.cpu.mem[addr];
+    const op = this.nes.mmap.load(addr);
     return '           $' + addr.toString(16).padStart(5, 0) + ': ' +
-        formatInstruction(this.nes, op, addr, (a) => this.nes.cpu.mem[a]);
+        formatInstruction(this.nes, op, addr, (a) => this.nes.mmap.load(a));
   }
 
   patchRom(addr, value) {
-    this.nes.rom.rom[addr >>> 14][addr & 0x3fff] = value;
+    this.nes.rom.rom[addr] = value;
   }
 
   memTracker() {
@@ -526,8 +525,8 @@ class CallStackTracker {
   push(data) {
     // First remove any obsolete elements.
     const sp = this.nes.cpu.REG_SP;
-    const mem = this.nes.cpu.mem;
-    const pc = mem[sp + 1] | (mem[sp + 2] << 8);
+    const mmap = this.nes.mmap;
+    const pc = mmap.load(sp + 1) | (mmap.load(sp + 2) << 8);
     const stack = this.stack;
     while (stack.length && stack[stack.length - 1].sp <= sp) stack.pop();
     stack.push({sp, pc, data});
@@ -549,8 +548,8 @@ class CallStackTracker {
    */
   pop() {
     const sp = this.nes.cpu.REG_SP;
-    const mem = this.nes.cpu.mem;
-    const pc = mem[sp + 1] | (mem[sp + 2] << 8);
+    const mmap = this.nes.mmap;
+    const pc = mmap.load(sp + 1) | (mmap.load(sp + 2) << 8);
     const stack = this.stack;
     let top;
     while (stack.length && stack[stack.length - 1].sp <= sp) top = stack.pop();
@@ -778,12 +777,12 @@ Debug.Coverage = class {
 // if (i == 0x1c26f)console.log('PRG');
         // would be nice to build in a count - could get 4 bits in the coverage
         // we'd need to be careful about wrapping
-        const value = type == 'x' ? 1 : this.nes.rom.rom[i >> 14][i & 0x3fff];
+        const value = type == 'x' ? 1 : this.nes.rom.rom[i];
         candidates['PRG $' + i.toString(16).padStart(5, 0)] = value;
       }
       if (valid & 0x07) {
 // if (i == 0x1c26f)console.log('RAM');
-        const value = type == 'x' ? 1 : this.nes.cpu.mem[i < 0x2000 ? i & 0x7ff : i];
+        const value = type == 'x' ? 1 : this.nes.mmap.load(i < 0x2000 ? i & 0x7ff : i);
         candidates['RAM $' + i.toString(16).padStart(4, 0)] = value;
       }
     }
@@ -817,30 +816,32 @@ Debug.MemTracker = class {
   }
 
   reset() {
-    const mem = this.nes.cpu.mem;
+    const mmap = this.nes.mmap;
     for (let i = 0; i < 0x8000; i++) {
-      this.mem[i] = mem[i];
+      this.mem[i] = mmap.load(i);
     }
     this.valid.fill(1);
   }
 
   expectSame() {
-    const mem = this.nes.cpu.mem;
+    const mmap = this.nes.mmap;
     let candidates = 0;
     for (let i = 0; i < 0x8000; i++) {
-      if (this.mem[i] != mem[i]) this.valid[i] = 0;
-      this.mem[i] = mem[i];
+      const mem = mmap.load(i);
+      if (this.mem[i] != mem) this.valid[i] = 0;
+      this.mem[i] = mem;
       candidates += this.valid[i];
     }
     return candidates;
   }
 
   expectDiff() {
-    const mem = this.nes.cpu.mem;
+    const mmap = this.nes.mmap;
     let candidates = 0;
     for (let i = 0; i < 0x8000; i++) {
-      if (this.mem[i] == mem[i]) this.valid[i] = 0;
-      this.mem[i] = mem[i];
+      const mem = mmap.load(i);
+      if (this.mem[i] == mem) this.valid[i] = 0;
+      this.mem[i] = mem;
       candidates += this.valid[i];
     }
     return candidates;
@@ -880,13 +881,13 @@ Debug.Watch = class {
     const fmt = (v, p) => `$${v.toString(16).padStart(p, 0)}${
                            ascii&&p==2&&v>31&&v<127?' ('+String.fromCharCode(v)+')':''}`;
     const read = type == 'ram' ?
-          (a) => this.nes.cpu.mem[a < 0x2000 ? a & 0x7ff : a] :
-          (a) => this.nes.rom.rom[a >>> 14][a & 0x3fff];
+          (a) => this.nes.mmap.load(a) :
+          (a) => this.nes.rom.rom[a];
     const pad = type = 'ram' ? 4 : 5;
     const pc = () => {
       const a = this.nes.cpu.REG_PC + 1;
-      const bank = this.nes.banks[a >>> 13];
-      return bank != null ? fmt(bank << 13 | a & 0x1fff, 5) : fmt(a, 4);
+      const bank = this.nes.mmap.prgRomBank(a);
+      return bank != null ? fmt(this.nes.mmap.prgRomAddress(bank, a), 5) : fmt(a, 4);
     }
     const scanline = () => `${this.nes.ppu.frame.toString(16).padStart(6,0)}:${
                               this.nes.ppu.scanline < 21 ? -1 :
@@ -961,7 +962,7 @@ Debug.WatchOld = class {
     }
     if (!(addr instanceof Array)) addr = [addr, addr];
     for (let i = addr[0]; i <= addr[1]; i++) {
-      this.watching[i] = this.nes.cpu.mem[i];
+      this.watching[i] = this.nes.mmap.load(i);
     }
   }
 
@@ -974,7 +975,7 @@ Debug.WatchOld = class {
     if (watching['cleared']) return;
     for (let addr in watching) {
       const old = watching[addr];
-      const curr = this.nes.cpu.mem[addr];
+      const curr = this.nes.mmap.load(addr);
       if (curr != old) {
         watching[addr] = curr;
         console.log(`Watch $${Number(addr).toString(16).padStart(4,0)}: ${

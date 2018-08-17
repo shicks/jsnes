@@ -26,7 +26,7 @@ export class Watch {
   }
 
   static ram(nes, address) {
-    return new Watch(() => nes.cpu.mem[address]);
+    return new Watch(() => nes.mmap.load(address));
   }
 }
 

@@ -24,15 +24,21 @@ export class MMC3 extends NROM {
     this.prgAddressChanged = false;
   }
 
-  write(address, value) {
-    // Writes to addresses other than MMC registers are handled by NoMapper.
-    if (address < 0x8000) {
-      super.write(address, value);
-      return;
-    }
+  initializePrgRom() {
+    this.addRomBank(0x8000, 0xa000, this.nes.rom.prgPage(0, 0x2000));
+    this.addRomBank(0xa000, 0xc000, this.nes.rom.prgPage(1, 0x2000));
+    this.addRomBank(0xc000, 0xe000, this.nes.rom.prgPage(-2, 0x2000));
+    this.addRomBank(0xe000, 0x10000, this.nes.rom.prgPage(-1, 0x2000));
+  }
 
-    switch (address) {
-    case 0x8000:
+  initializeRegisters() {
+    super.initializeRegisters();
+    this.addRegisterBank('w', 0x8000, 0xa000, 2);
+    this.addRegisterBank('w', 0xa000, 0xc000, 2);
+    this.addRegisterBank('w', 0xc000, 0xe000, 2);
+    this.addRegisterBank('w', 0xe000, 0x10000, 2);
+
+    this.onWrite(0x8000, (value) => {
       // Command/Address Select register
       this.command = value & 7;
       var tmp = (value >> 6) & 1;
@@ -41,56 +47,49 @@ export class MMC3 extends NROM {
       }
       this.prgAddressSelect = tmp;
       this.chrAddressSelect = (value >> 7) & 1;
-      break;
+    });
 
-    case 0x8001:
+    this.onWrite(0x8001, (value) => {
       // Page number for command
       this.executeCommand(this.command, value);
-      break;
+    });
 
-    case 0xa000:
+    this.onWrite(0xa000, (value) => {
       // Mirroring select
       if ((value & 1) !== 0) {
         this.nes.ppu.setMirroring(this.nes.rom.HORIZONTAL_MIRRORING);
       } else {
         this.nes.ppu.setMirroring(this.nes.rom.VERTICAL_MIRRORING);
       }
-      break;
+    });
 
-    case 0xa001:
+    this.onWrite(0xa001, (value) => {
       // SaveRAM Toggle
       // TODO
       //nes.getRom().setSaveState((value&1)!=0);
-      break;
+    });
 
-    case 0xc000:
+    this.onWrite(0xc000, (value) => {
       // IRQ Counter register
       this.irqCounter = value;
       //nes.ppu.mapperIrqCounter = 0;
-      break;
+    });
 
-    case 0xc001:
+    this.onWrite(0xc001, (value) => {
       // IRQ Latch register
       this.irqLatchValue = value;
-      break;
+    });
 
-    case 0xe000:
+    this.onWrite(0xe000, (value) => {
       // IRQ Control Reg 0 (disable)
       //irqCounter = irqLatchValue;
       this.irqEnable = 0;
-      break;
+    });
 
-    case 0xe001:
+    this.onWrite(0xe001, (value) => {
       // IRQ Control Reg 1 (enable)
       this.irqEnable = 1;
-      break;
-
-    default:
-      // Not a MMC3 register.
-      // The game has probably crashed,
-      // since it tries to write to ROM..
-      // IGNORE.
-    }
+    });
   }
 
   executeCommand(cmd, arg) {
@@ -157,59 +156,36 @@ export class MMC3 extends NROM {
       if (this.prgAddressChanged) {
         // Load the two hardwired banks:
         if (this.prgAddressSelect === 0) {
-          this.load8kRomBank((this.nes.rom.romCount - 1) * 2, 0xc000);
+          this.loadPrgPage(0xc000, -2, 0x2000);
         } else {
-          this.load8kRomBank((this.nes.rom.romCount - 1) * 2, 0x8000);
+          this.loadPrgPage(0x8000, -2, 0x2000);
         }
         this.prgAddressChanged = false;
       }
 
       // Select first switchable ROM page:
       if (this.prgAddressSelect === 0) {
-        this.load8kRomBank(arg, 0x8000);
+        this.loadPrgPage(0x8000, arg, 0x2000);
       } else {
-        this.load8kRomBank(arg, 0xc000);
+        this.loadPrgPage(0xc000, arg, 0x2000);
       }
       break;
 
     case this.CMD_SEL_ROM_PAGE2:
       // Select second switchable ROM page:
-      this.load8kRomBank(arg, 0xa000);
+      this.loadPrgPage(0xa000, arg, 0x2000);
 
       // hardwire appropriate bank:
       if (this.prgAddressChanged) {
         // Load the two hardwired banks:
         if (this.prgAddressSelect === 0) {
-          this.load8kRomBank((this.nes.rom.romCount - 1) * 2, 0xc000);
+          this.loadPrgPage(0xc000, -2, 0x2000);
         } else {
-          this.load8kRomBank((this.nes.rom.romCount - 1) * 2, 0x8000);
+          this.loadPrgPage(0x8000, -2, 0x2000);
         }
         this.prgAddressChanged = false;
       }
     }
-  }
-
-  loadROM() {
-    if (!this.nes.rom.valid) {
-      throw new Error("MMC3: Invalid ROM! Unable to load.");
-    }
-
-    // Load hardwired PRG banks (0xC000 and 0xE000):
-    this.load8kRomBank((this.nes.rom.romCount - 1) * 2, 0xc000);
-    this.load8kRomBank((this.nes.rom.romCount - 1) * 2 + 1, 0xe000);
-
-    // Load swappable PRG banks (0x8000 and 0xA000):
-    this.load8kRomBank(0, 0x8000);
-    this.load8kRomBank(1, 0xa000);
-
-    // Load CHR-ROM:
-    this.loadCHRROM();
-
-    // Load Battery RAM (if present):
-    this.loadBatteryRam();
-
-    // Do Reset-Interrupt:
-    this.nes.cpu.requestIrq(this.nes.cpu.IRQ_RESET);
   }
 
   clockIrqCounter() {

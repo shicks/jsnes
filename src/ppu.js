@@ -754,7 +754,9 @@ PPU.prototype = {
     var baseAddress = value * 0x100;
     var data;
     for (var i = this.sramAddress; i < 256; i++) {
-      data = this.nes.cpu.mem[baseAddress + i];
+      // TODO(sdh): consider storing the actual CPU RAM on the cpu object
+      // and then revert this to cpu.mem - but that's more complicated.
+      data = this.nes.mmap.load(baseAddress + i);
       this.spriteMem[i] = data;
       this.spriteRamWriteUpdate(i, data);
     }

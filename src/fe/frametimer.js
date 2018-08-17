@@ -101,6 +101,11 @@ export class FrameTimer {
       this.onAnimationFrame();
       return;
     }
+    if (this.frameSkip) {
+      const time = new Date().getTime();
+      console.log(`Average FPS: ${((this.frameSkip + 1) / (time - lastFrameTime) * 1000).toFixed(2)}`);
+      lastFrameTime = time;
+    }
     this.requestAnimationFrame();
 
     if (this.running) {
@@ -122,3 +127,5 @@ export class FrameTimer {
     }
   }
 }
+
+let lastFrameTime;

@@ -26,21 +26,15 @@ export class MMC1 extends NROM {
     this.romBankSelect = 0;
   }
 
-  write(address, value) {
-    // Writes to addresses other than MMC registers are handled by NoMapper.
-    if (address < 0x8000) {
-      super.write(address, value);
-      return;
-    }
-
+  writeRegister(reg, value) {
     // See what should be done with the written value:
-    if ((value & 128) !== 0) {
+    if ((value & 0x80)) {
       // Reset buffering:
       this.regBufferCounter = 0;
       this.regBuffer = 0;
 
       // Reset register:
-      if (this.getRegNumber(address) === 0) {
+      if (!reg) {
         this.prgSwitchingArea = 1;
         this.prgSwitchingSize = 1;
       }
@@ -54,7 +48,7 @@ export class MMC1 extends NROM {
 
       if (this.regBufferCounter === 5) {
         // Use the buffered value:
-        this.setReg(this.getRegNumber(address), this.regBuffer);
+        this.setReg(reg, this.regBuffer);
 
         // Reset buffer:
         this.regBuffer = 0;
@@ -63,7 +57,7 @@ export class MMC1 extends NROM {
     }
   }
 
-  setReg = function(reg, value) {
+  setReg(reg, value) {
     var tmp;
 
     switch (reg) {
@@ -100,7 +94,7 @@ export class MMC1 extends NROM {
       this.romSelectionReg0 = (value >> 4) & 1;
 
       // Check whether the cart has VROM:
-      if (this.nes.rom.vromCount > 0) {
+      if (this.nes.rom.vrom.lrngth > 0) {
         // Select VROM bank at 0x0000:
         if (this.vromSwitchingSize === 0) {
           // Swap 8kB VROM:
@@ -108,7 +102,7 @@ export class MMC1 extends NROM {
             this.load8kVromBank(value & 0xf, 0x0000);
           } else {
             this.load8kVromBank(
-              Math.floor(this.nes.rom.vromCount / 2) + (value & 0xf),
+              Math.floor(this.nes.rom.vromCount() / 2) + (value & 0xf),
               0x0000
             );
           }
@@ -118,7 +112,7 @@ export class MMC1 extends NROM {
             this.loadVromBank(value & 0xf, 0x0000);
           } else {
             this.loadVromBank(
-              Math.floor(this.nes.rom.vromCount / 2) + (value & 0xf),
+              Math.floor(this.nes.rom.vromCount() / 2) + (value & 0xf),
               0x0000
             );
           }
@@ -132,7 +126,7 @@ export class MMC1 extends NROM {
       this.romSelectionReg1 = (value >> 4) & 1;
 
       // Check whether the cart has VROM:
-      if (this.nes.rom.vromCount > 0) {
+      if (this.nes.rom.vrom.length > 0) {
         // Select VROM bank at 0x1000:
         if (this.vromSwitchingSize === 1) {
           // Swap 4kB of VROM:
@@ -140,7 +134,7 @@ export class MMC1 extends NROM {
             this.loadVromBank(value & 0xf, 0x1000);
           } else {
             this.loadVromBank(
-              Math.floor(this.nes.rom.vromCount / 2) + (value & 0xf),
+              Math.floor(this.nes.rom.vromCount() / 2) + (value & 0xf),
               0x1000
             );
           }
@@ -151,11 +145,10 @@ export class MMC1 extends NROM {
     default:
       // Select ROM bank:
       // -------------------------
-      tmp = value & 0xf;
       var bank;
       var baseBank = 0;
 
-      if (this.nes.rom.romCount >= 32) {
+      if (this.nes.rom.romCount() >= 32) {
         // 1024 kB cart
         if (this.vromSwitchingSize === 0) {
           if (this.romSelectionReg0 === 1) {
@@ -165,7 +158,7 @@ export class MMC1 extends NROM {
           baseBank =
             (this.romSelectionReg0 | (this.romSelectionReg1 << 1)) << 3;
         }
-      } else if (this.nes.rom.romCount >= 16) {
+      } else if (this.nes.rom.romCount() >= 16) {
         // 512 kB cart
         if (this.romSelectionReg0 === 1) {
           baseBank = 8;
@@ -175,49 +168,32 @@ export class MMC1 extends NROM {
       if (this.prgSwitchingSize === 0) {
         // 32kB
         bank = baseBank + (value & 0xf);
-        this.load32kRomBank(bank, 0x8000);
+        this.loadPrgPage(0x8000, 2 * bank, 0x4000);
+        this.loadPrgPage(0xc000, 2 * bank + 1, 0x4000);
       } else {
         // 16kB
         bank = baseBank * 2 + (value & 0xf);
         if (this.prgSwitchingArea === 0) {
-          this.loadRomBank(bank, 0xc000);
+          this.loadPrgPage(0xc000, bank, 0x4000);
         } else {
-          this.loadRomBank(bank, 0x8000);
+          this.loadPrgPage(0x8000, bank, 0x4000);
         }
       }
     }
   }
 
-  // Returns the register number from the address written to:
-  getRegNumber(address) {
-    if (address >= 0x8000 && address <= 0x9fff) {
-      return 0;
-    } else if (address >= 0xa000 && address <= 0xbfff) {
-      return 1;
-    } else if (address >= 0xc000 && address <= 0xdfff) {
-      return 2;
-    } else {
-      return 3;
-    }
+  initializePrgRom() {
+    this.addRomBank(0x8000, 0xc000, this.nes.rom.prgPage(0, 0x4000));
+    this.addRomBank(0xc000, 0x10000, this.nes.rom.prgPage(-1, 0x4000));
   }
 
-  loadROM() {
-    if (!this.nes.rom.valid) {
-      throw new Error("MMC1: Invalid ROM! Unable to load.");
+  initializeRegisters() {
+    super.initializeRegisters();
+    for (let addr = 0x8000; addr < 0x10000; addr += 0x2000) {
+      this.addRegisterBank('w', addr, addr + 0x2000, 1);
+      const reg = addr >>> 13;
+      this.onWrite(addr, (value) => this.writeRegister(reg, value));
     }
-
-    // Load PRG-ROM:
-    this.loadRomBank(0, 0x8000); //   First ROM bank..
-    this.loadRomBank(this.nes.rom.romCount - 1, 0xc000); // ..and last ROM bank.
-
-    // Load CHR-ROM:
-    this.loadCHRROM();
-
-    // Load Battery RAM (if present):
-    this.loadBatteryRam();
-
-    // Do Reset-Interrupt:
-    this.nes.cpu.requestIrq(this.nes.cpu.IRQ_RESET);
   }
 
   // eslint-disable-next-line no-unused-vars
