@@ -5,6 +5,7 @@ export function CPU(nes) {
   this.nes = nes;
 
   // Keep Chrome happy
+  this.ram = null;
   this.REG_ACC = null;
   this.REG_X = null;
   this.REG_Y = null;
@@ -42,6 +43,7 @@ CPU.prototype = {
   snapshot: function() {
     // return an object that can be restored, includes all mem, etc
     return {
+      ram: this.ram,
       REG_ACC: this.REG_ACC,
       REG_X: this.REG_X,
       REG_Y: this.REG_Y,
@@ -68,6 +70,7 @@ CPU.prototype = {
   },
 
   restore: function(snapshot) {
+    this.ram = snapshot.ram;
     this.REG_ACC = snapshot.REG_ACC;
     this.REG_X = snapshot.REG_X;
     this.REG_Y = snapshot.REG_Y;
@@ -93,6 +96,11 @@ CPU.prototype = {
   },
 
   reset: function() {
+    this.ram = new Uint8Array(0x800).fill(0xff);
+    this.ram[0x8] = 0xf7;
+    this.ram[0x9] = 0xef;
+    this.ram[0xa] = 0xdf;
+    this.ram[0xf] = 0xbf;
     // CPU Registers:
     this.REG_ACC = 0;
     this.REG_X = 0;

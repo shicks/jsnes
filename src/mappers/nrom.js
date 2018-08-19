@@ -15,6 +15,14 @@ export const PRG_BANK_MASK = 0x7ff;
 /** Bits in a PRG bank. */
 export const PRG_BANK_SIZE = countBits(PRG_BANK_MASK);
 
+export const SIZE_64K = 0x10000;
+export const SIZE_32K = 0x8000;
+export const SIZE_16K = 0x4000;
+export const SIZE_8K = 0x2000;
+export const SIZE_4K = 0x1000;
+export const SIZE_2K = 0x0800;
+export const SIZE_1K = 0x0400;
+
 // TODO - CHR banks?
 
 const NULL_READ = () => 0;
@@ -36,22 +44,27 @@ export class NROM {
     // TODO - this is probably just a method?
     this.battery = null;
     // Included verbatim in snapshots.
-    this.ram = null;
     this.prgRam = null;
+    
+    // TODO - chrRam?
+
     // Array of Uint8Arrays and ordinary Arrays of functions.  When
     // taking snapshot, the source (ram or rom) and the offset are
     // recorded.  Initialized to a no-op so that uninitialized regions
     // don't blow up.
-    this.prgBanks = [[undefined]];
+    this.cpuBanks = [[]];
+    // Array of Uint8Arrays - we might combine this with cpuBanks?
+    this.ppuBanks = [];
 
-    // Memory mapping.  Values are indexes into this.prgBanks, of which
+    // Memory mapping.  Values are indexes into this.cpuBanks, of which
     // there should certainly not be more than 255, since we will be
     // swapping arrays into those banks.  These two arrays are the
     // individually swappable regions of memory, and are initialized
     // once in initialize() and never mutated.
-    this.prgRead = new Uint8Array(0x10000); // filled with zeros
-    this.prgWrite = new Uint8Array(0x10000);
-   }
+    this.cpuRead = new Uint8Array(SIZE_64K); // filled with zeros
+    this.cpuWrite = new Uint8Array(SIZE_64K);
+    this.ppuMap = new Uint8Array(SIZE_16K);
+  }
 
   defineRegister(bank, reg, handler) {
     if (!bank) throw new Error(`No bank defined: ${reg}`);
@@ -63,50 +76,55 @@ export class NROM {
 
   // Helper method for implementing initializeRegisters.
   onLoad(reg, getter) {
-    this.defineRegister(this.prgBanks[this.prgRead[reg]], reg, getter);
+    this.defineRegister(this.cpuBanks[this.cpuRead[reg]], reg, getter);
   }
 
   onWrite(reg, setter) {
-    this.defineRegister(this.prgBanks[this.prgWrite[reg]], reg, setter);
+    this.defineRegister(this.cpuBanks[this.cpuWrite[reg]], reg, setter);
   }
 
   addBankInternal(prg, start, end, bank) {
-    const index = this.prgBanks.length;
-    this.prgBanks.push(bank);
+    const banks = prg == this.ppuMap ? this.ppuBanks : this.cpuBanks;
+    const index = banks.length;
+    banks.push(bank);
     prg.fill(index, start, end);
-    return index;
   }
 
   addRamBank(start, end, bank) {
-    this.prgWrite.fill(this.prgBanks.length, start, end);
-    return this.addBankInternal(this.prgRead, start, end, bank);
+    this.cpuWrite.fill(this.cpuBanks.length, start, end);
+    this.addBankInternal(this.cpuRead, start, end, bank);
   }
 
   addRomBank(start, end, bank) {
-    return this.addBankInternal(this.prgRead, start, end, bank);
+    this.addBankInternal(this.cpuRead, start, end, bank);
   }
 
   addRegisterBank(readOrWrite, start, end, size = end - start) {
     if (readOrWrite.includes('r')) {
       readOrWrite = readOrWrite.replace('r', '');
-      this.addBankInternal(this.prgRead, start, end, new Array(size));
+      this.addBankInternal(this.cpuRead, start, end, new Array(size));
     }
     if (readOrWrite.includes('w')) {
       readOrWrite = readOrWrite.replace('w', '');
-      this.addBankInternal(this.prgWrite, start, end, new Array(size));
+      this.addBankInternal(this.cpuWrite, start, end, new Array(size));
     }
     if (readOrWrite) {
       throw new Error(`bad readOrWrite value: ${readOrWrite}`);
     }
   }
 
+  addVramBank(start, end, bank) {
+    this.addBankInternal(this.ppuMap, start, end, bank);
+  }
+
+  // NOTE: Just assume pattern tables are CHR RAM, since I don't
+  // think it's necessarily clear from the mapper alone.
+  // addVromBank(start, end, bank) {
+  //   this.addBankInternal(this.ppuMap, start, end, bank);
+  // }
+
   initializeRam() {
-    this.ram = new Uint8Array(0x800).fill(0xff);
-    this.ram[0x8] = 0xf7; // just call reset()?
-    this.ram[0x9] = 0xef;
-    this.ram[0xa] = 0xdf;
-    this.ram[0xf] = 0xbf;
-    this.addRamBank(0, 0x2000, this.ram);
+    this.addRamBank(0, 0x2000, this.nes.cpu.ram);
   }
 
   initializePrgRam() {
@@ -118,6 +136,47 @@ export class NROM {
   initializePrgRom() {
     // May be overwritten to handle paging, etc.
     this.addRomBank(0x8000, 0x10000, this.nes.rom.prgPage(0, 0x8000));
+  }
+
+  initializePalettes() {
+    this.addVramBank(0x3f00, 0x4000, this.nes.ppu.vram.subarray(0x1100, 0x1120));
+  }
+
+  initializeNametables() {
+    this.addVramBank(0x2000, 0x2400);
+    this.addVramBank(0x2400, 0x2800);
+    this.addVramBank(0x2800, 0x2c00);
+    this.addVramBank(0x2c00, 0x3000);
+    this.setNametableMapping(this.nes.ppu.vram, 0, 1, 2, 3);
+
+    this.ppuMap.fill(this.ppuMap[0x2000], 0x3000, 0x3400);
+    this.ppuMap.fill(this.ppuMap[0x2400], 0x3400, 0x3800);
+    this.ppuMap.fill(this.ppuMap[0x2800], 0x3800, 0x3c00);
+    this.ppuMap.fill(this.ppuMap[0x2c00], 0x3c00, 0x3f00);
+  }
+
+  initializePatternTableBanks() {
+    this.addVramBank(0x0000, 0x1000);
+    this.addVramBank(0x1000, 0x2000);
+  }
+
+  initializePatternTables() {
+    const vromCount = this.nes.rom.vromCount();
+    if (vromCount > 0) {
+      this.loadChrPage(0x0000, 0, 0x1000);
+      this.loadChrPage(0x1000, Math.min(vromCount - 1, 1), 0x1000);
+    }
+  }
+
+  setNametableMapping(vram, n1, n2, n3, n4) {
+    n1 <<= 10;
+    n2 <<= 10;
+    n3 <<= 10;
+    n4 <<= 10;
+    this.ppuBanks[this.ppuMap[0x2000]] = vram.subarray(n1, n1 + 0x400);
+    this.ppuBanks[this.ppuMap[0x2400]] = vram.subarray(n2, n2 + 0x400);
+    this.ppuBanks[this.ppuMap[0x2800]] = vram.subarray(n3, n3 + 0x400);
+    this.ppuBanks[this.ppuMap[0x2c00]] = vram.subarray(n4, n4 + 0x400);
   }
 
   // Overridable method for special handling of certain read/writes.
@@ -177,16 +236,6 @@ export class NROM {
     this.zapperX = null;
     this.zapperY = null;
 
-    if (this.ram) {
-      this.ram.fill(0);
-      // CPU RAM apparently resets to all $ff?
-      this.ram.fill(0xff);
-      this.ram[0x8] = 0xf7;
-      this.ram[0x9] = 0xef;
-      this.ram[0xa] = 0xdf;
-      this.ram[0xf] = 0xbf;
-    }
-    
     this.loadBatteryRam();
   }
 
@@ -202,7 +251,7 @@ export class NROM {
   // indirection where paged roms' getters look up the current bank and return that.
 
   write(address, value) {
-    const bank = this.prgBanks[this.prgWrite[address]];
+    const bank = this.cpuBanks[this.cpuWrite[address]];
     if (!bank) return;
     const index = address & (bank.length - 1);
     const oldValue = bank[index];
@@ -217,12 +266,53 @@ export class NROM {
   }
 
   load(address) {
-    const bank = this.prgBanks[this.prgRead[address]];
-    if (!bank) return;
+    const bank = this.cpuBanks[this.cpuRead[address]];
+    if (!bank) return 0;
     const index = address & (bank.length - 1);
     const value = bank[index];
     if (value >= 0) return value;
     return typeof value == 'function' ? value(this.nes) : 0;
+  }
+
+  loadPpu(address) {
+    address &= 0x3fff;
+    const bank = this.ppuBanks[this.ppuMap[address]];
+    if (!bank) return 0;
+    return bank[address & (bank.length - 1)];
+  }
+
+  loadPalette(address) {
+    // Returns a 16-byte array based on the bank of the first element.
+    // address should be either 0x3f00 or 0x3f10.
+    const bank = this.ppuBanks[this.ppuMap[address]];
+    if (!bank) return this.nes.ppu.vram.subarray(address - 0x2e00, address - 0x2df0);
+    const masked = address & (bank.length - 1);
+    return bank.subarray(masked, masked + 0x10);
+  }
+
+  loadTileScanline(address) {
+    // Loads a single tile scanline by looking up the low and the high bytes
+    // and intercalating them.  Assumes both bytes are in same bank.
+    const bank = this.ppuBanks[this.ppuMap[address]];
+    if (!bank) return 0;
+    const masked = address & (bank.length - 1);
+    return INTERCALATE_LOW[bank[masked]] | INTERCALATE_HIGH[bank[masked | 0x08]];
+
+    // alternate version with no lookup table:
+    // let value = bank[masked] | (bank[masked | 0x08] << 8);
+    // let tmp = (value ^ (value >> 4)) & 0x00f0;
+    // value ^= (tmp ^ (tmp << 4));
+    // tmp = (value ^ (value >> 2)) & 0x0c0c;
+    // value ^= (tmp ^ (tmp << 2));
+    // tmp = (value ^ (value >> 1)) & 0x2222;
+    // return value ^ (tmp ^ (tmp << 1));
+  }
+
+  writePpu(address, value) {
+    address &= 0x3fff;
+    const bank = this.ppuBanks[this.ppuMap[address]];
+    if (!bank) return;
+    bank[address & (bank.length - 1)] = value;
   }
 
   writeJoystickStrobe(value) {
@@ -292,12 +382,16 @@ export class NROM {
     this.initializePrgRam();
     this.initializePrgRom();
     this.initializeRegisters();
+    this.initializePatternTableBanks();
+    this.initializePatternTables();
+    this.initializeNametables();
+    this.initializePalettes();
 
     // // Load ROM into memory:
     // this.loadPRGROM();
 
     // Load CHR-ROM:
-    this.loadCHRROM();
+    //this.loadCHRROM();
 
     // Load Battery RAM (if present):
     this.loadBatteryRam();
@@ -307,7 +401,7 @@ export class NROM {
     this.nes.cpu.requestIrq(this.nes.cpu.IRQ_RESET);
 
     // Ensure super.initializeRegisters was called!
-    if (!this.prgWrite[0x4015]) {
+    if (!this.cpuWrite[0x4015]) {
       throw new Error('Forgot to call super.initializeRegisters?');
     }
   }
@@ -451,8 +545,16 @@ export class NROM {
     }
   }
 
+  // Loads a page of PRG ROM
   loadPrgPage(address, bank, size) {
-    this.prgBanks[this.prgRead[address]] = this.nes.rom.prgPage(bank, size);
+    this.cpuBanks[this.cpuRead[address]] = this.nes.rom.prgPage(bank, size);
+  }
+
+  // Loads a page of CHR ROM
+  loadChrPage(address, bank, size) {
+    // How to prevent modification?
+    this.ppuBanks[this.ppuMap[address]] = this.nes.rom.chrPage(bank, size);
+if(window.DEBUG)console.log(`load ${size} rom bank ${bank} @ ${address.toString(16).padStart(6,0)}: ${Array.from(this.nes.rom.chrPage(bank, size)).slice(0,20).join(',')}`);
   }
 
   // load8kRomBank(bank8k, address) {
@@ -490,7 +592,7 @@ export class NROM {
     // TODO - we currently hard-code 8k pages, but this is not necessarily
     // the case; it should be overridden by the particular mapper, or else
     // configure what the page size is in the ctor?
-    const bank = this.prgBanks[this.prgRead[addr]];
+    const bank = this.cpuBanks[this.cpuRead[addr]];
     if (bank && bank.buffer == this.nes.rom.rom.buffer) {
       return bank.byteOffset >>> 13;
     }
@@ -507,8 +609,8 @@ export class NROM {
       joy1StrobeState: this.joy1StrobeState,
       joy2StrobeState: this.joy2StrobeState,
       joypadLastWrite: this.joypadLastWrite,
-      ram: this.ram,
-      prg: this.serializeBanks(this.prgBanks),
+      prgRam: Array.from(this.prgRam),
+      prg: this.serializeBanks(this.cpuBanks),
     };
   }
 
@@ -516,8 +618,8 @@ export class NROM {
     this.joy1StrobeState = s.joy1StrobeState;
     this.joy2StrobeState = s.joy2StrobeState;
     this.joypadLastWrite = s.joypadLastWrite;
-    this.ram = s.ram;
-    this.deserializeBanks(this.prgBanks, s.prg);
+    this.prgRam = Uint8Array.from(s.prgRam);
+    this.deserializeBanks(this.cpuBanks, s.prg);
   }
 
   serializeBanks(banks) {
@@ -527,7 +629,7 @@ export class NROM {
         source = 'prg-rom';
       } else if (bank.buffer == this.prgRam.buffer) {
         source = 'prg-ram';
-      } else if (bank.buffer == this.ram.buffer) {
+      } else if (bank.buffer == this.nes.cpu.ram.buffer) {
         source = 'ram';
       } else if (bank.buffer == this.nes.rom.vrom.buffer) {
         source = 'chr';
@@ -540,7 +642,7 @@ export class NROM {
     const sources = {
       'prg-rom': this.nes.rom.rom.buffer,
       'prg-ram': this.prgRam.buffer,
-      'ram': this.ram.buffer,
+      'ram': this.nes.cpu.ram.buffer,
       'chr': this.nes.rom.vrom.buffer,
     };
     for (let i = 0; i < data.length; i++) {
@@ -549,3 +651,25 @@ export class NROM {
     }
   }
 }
+
+// Look up tables for intercalated zeros in a number
+// abcdefgh -> 0a0b0c0d0e0f0g0h or a0b0c0d0e0f0g0h0
+const [INTERCALATE_LOW, INTERCALATE_HIGH] = (() => {
+  const lo = new Uint16Array(256);
+  const hi = new Uint16Array(256);
+  for (let i = 0; i < 256; i++) {
+    let value = 0;
+    let shift = 0;
+    let x = i;
+    while (x) {
+      if (x & 1) {
+        value |= (1 << shift);
+      }
+      x >>>= 1;
+      shift += 2;
+    }
+    lo[i] = value;
+    hi[i] = value << 1;
+  }
+  return [lo, hi];
+})();

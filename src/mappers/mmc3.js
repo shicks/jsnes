@@ -31,6 +31,21 @@ export class MMC3 extends NROM {
     this.addRomBank(0xe000, 0x10000, this.nes.rom.prgPage(-1, 0x2000));
   }
 
+  initializePatternTableBanks() {
+    for (let i = 0; i < 0x2000; i += 0x400) {
+      this.addVramBank(i, i + 0x400);
+    }
+  }
+
+  initializePatternTables() {
+    const vromCount = this.nes.rom.vromCount(0x400);
+    if (vromCount > 0) {
+      for (let i = 0; i < 8; i++) {
+        this.loadChrPage(i << 12, i % vromCount, 0x0400);
+      }
+    }
+  }
+
   initializeRegisters() {
     super.initializeRegisters();
     this.addRegisterBank('w', 0x8000, 0xa000, 2);
@@ -97,58 +112,58 @@ export class MMC3 extends NROM {
     case this.CMD_SEL_2_1K_VROM_0000:
       // Select 2 1KB VROM pages at 0x0000:
       if (this.chrAddressSelect === 0) {
-        this.load1kVromBank(arg, 0x0000);
-        this.load1kVromBank(arg + 1, 0x0400);
+        this.loadChrPage(0x0000, arg, 0x400);
+        this.loadChrPage(0x0400, arg + 1, 0x400);
       } else {
-        this.load1kVromBank(arg, 0x1000);
-        this.load1kVromBank(arg + 1, 0x1400);
+        this.loadChrPage(0x1000, arg, 0x400);
+        this.loadChrPage(0x1400, arg + 1, 0x400);
       }
       break;
 
     case this.CMD_SEL_2_1K_VROM_0800:
       // Select 2 1KB VROM pages at 0x0800:
       if (this.chrAddressSelect === 0) {
-        this.load1kVromBank(arg, 0x0800);
-        this.load1kVromBank(arg + 1, 0x0c00);
+        this.loadChrPage(0x0800, arg, 0x400);
+        this.loadChrPage(0x0c00, arg + 1, 0x400);
       } else {
-        this.load1kVromBank(arg, 0x1800);
-        this.load1kVromBank(arg + 1, 0x1c00);
+        this.loadChrPage(0x1800, arg, 0x400);
+        this.loadChrPage(0x1c00, arg + 1, 0x400);
       }
       break;
 
     case this.CMD_SEL_1K_VROM_1000:
       // Select 1K VROM Page at 0x1000:
       if (this.chrAddressSelect === 0) {
-        this.load1kVromBank(arg, 0x1000);
+        this.loadChrPage(0x1000, arg, 0x400);
       } else {
-        this.load1kVromBank(arg, 0x0000);
+        this.loadChrPage(0x0000, arg, 0x400);
       }
       break;
 
     case this.CMD_SEL_1K_VROM_1400:
       // Select 1K VROM Page at 0x1400:
       if (this.chrAddressSelect === 0) {
-        this.load1kVromBank(arg, 0x1400);
+        this.loadChrPage(0x1400, arg, 0x400);
       } else {
-        this.load1kVromBank(arg, 0x0400);
+        this.loadChrPage(0x400, arg, 0x400);
       }
       break;
 
     case this.CMD_SEL_1K_VROM_1800:
       // Select 1K VROM Page at 0x1800:
       if (this.chrAddressSelect === 0) {
-        this.load1kVromBank(arg, 0x1800);
+        this.loadChrPage(0x1800, arg, 0x400);
       } else {
-        this.load1kVromBank(arg, 0x0800);
+        this.loadChrPage(0x0800, arg, 0x400);
       }
       break;
 
     case this.CMD_SEL_1K_VROM_1C00:
       // Select 1K VROM Page at 0x1C00:
       if (this.chrAddressSelect === 0) {
-        this.load1kVromBank(arg, 0x1c00);
+        this.loadChrPage(0x1c00, arg, 0x400);
       } else {
-        this.load1kVromBank(arg, 0x0c00);
+        this.loadChrPage(0x0c00, arg, 0x400);
       }
       break;
 

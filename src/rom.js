@@ -1,5 +1,5 @@
 import {Mappers} from './mappers.js';
-import {Tile} from './tile.js';
+//import {Tile} from './tile.js';
 
 export function ROM(nes) {
   this.nes = nes;
@@ -132,40 +132,46 @@ ROM.prototype = {
       this.hash = ((this.hash * 31 >>> 0) + x) >>> 0;
     }
 
-    // Create VROM tiles:
-    this.vromTile = new Array(vromCount);
-    for (let i = 0; i < vromCount; i++) {
-      this.vromTile[i] = new Array(256);
-      for (let j = 0; j < 256; j++) {
-        this.vromTile[i][j] = new Tile();
-      }
-    }
+    // // Create VROM tiles:
+    // this.vromTile = new Array(vromCount);
+    // for (let i = 0; i < vromCount; i++) {
+    //   this.vromTile[i] = new Array(256);
+    //   for (let j = 0; j < 256; j++) {
+    //     this.vromTile[i][j] = new Tile();
+    //   }
+    // }
 
-    // Convert CHR-ROM banks to tiles:
-    var tileIndex;
-    var leftOver;
-    for (let v = 0; v < vromCount; v++) {
-      for (let i = 0; i < 4096; i++) {
-        tileIndex = i >> 4;
-        leftOver = i % 16;
-        if (leftOver < 8) {
-          this.vromTile[v][tileIndex].setScanline(
-            leftOver,
-            this.vrom[(v << 12) | i],
-            this.vrom[(v << 12) | (i + 8)]
-          );
-        } else {
-          this.vromTile[v][tileIndex].setScanline(
-            leftOver - 8,
-            this.vrom[(v << 12) | (i - 8)],
-            this.vrom[(v << 12) | i]
-          );
-        }
-      }
-    }
+    // // Convert CHR-ROM banks to tiles:
+    // var tileIndex;
+    // var leftOver;
+    // for (let v = 0; v < vromCount; v++) {
+    //   for (let i = 0; i < 4096; i++) {
+    //     tileIndex = i >> 4;
+    //     leftOver = i % 16;
+    //     if (leftOver < 8) {
+    //       this.vromTile[v][tileIndex].setScanline(
+    //         leftOver,
+    //         this.vrom[(v << 12) | i],
+    //         this.vrom[(v << 12) | (i + 8)]
+    //       );
+    //     } else {
+    //       this.vromTile[v][tileIndex].setScanline(
+    //         leftOver - 8,
+    //         this.vrom[(v << 12) | (i - 8)],
+    //         this.vrom[(v << 12) | i]
+    //       );
+    //     }
+    //   }
+    // }
 
     this.valid = true;
     this.hash = this.hash.toString(36);
+  },
+
+  chrPage: function(page, size) {
+    if (page < 0) page = Math.floor(this.vrom.length / size) + page;
+    const offset = page * size % (this.vrom.length & ~(size - 1));
+    return this.vrom.subarray(offset, offset + size);
   },
 
   prgPage: function(page, size) {
