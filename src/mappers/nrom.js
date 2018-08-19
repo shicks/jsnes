@@ -290,13 +290,19 @@ export class NROM {
     return bank.subarray(masked, masked + 0x10);
   }
 
-  loadTileScanline(address) {
+  loadTileScanline(address, reverse = false) {
     // Loads a single tile scanline by looking up the low and the high bytes
     // and intercalating them.  Assumes both bytes are in same bank.
     const bank = this.ppuBanks[this.ppuMap[address]];
     if (!bank) return 0;
     const masked = address & (bank.length - 1);
-    return INTERCALATE_LOW[bank[masked]] | INTERCALATE_HIGH[bank[masked | 0x08]];
+    let lo = bank[masked];
+    let hi = bank[masked | 0x08];
+    if (reverse) {
+      lo = utils.reverseBits(lo);
+      hi = utils.reverseBits(hi);
+    }
+    return INTERCALATE_LOW[lo] | INTERCALATE_HIGH[hi];
 
     // alternate version with no lookup table:
     // let value = bank[masked] | (bank[masked | 0x08] << 8);

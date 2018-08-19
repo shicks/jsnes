@@ -903,9 +903,6 @@ PPU.prototype = {
       var pixrendered = this.pixrendered;
       var targetBuffer = bgbuffer ? this.bgbuffer : this.buffer;
 
-const d=window.DEBUG&&!(scan!=100);
-if(d)console.log(`render scanline ${scan}`);
-
       // tileX is tile index relative to top-left of screen
       // cntHT and cntVT are relative to the top corner of the nametable
       for (let tileX = 0; tileX < 32; tileX++) {
@@ -916,16 +913,15 @@ if(d)console.log(`render scanline ${scan}`);
           let line = this.nes.mmap.loadTileScanline(tileAddress);
           const attrByte =
               this.nes.mmap.loadPpu(
-                  nt | 0x3c0 | ((this.cntVT & 0xfc) << 1) | (tileX >> 2));
+                  nt | 0x3c0 | ((this.cntVT & 0xfc) << 1) | (this.cntHT >> 2));
           const attrShift = ((this.cntVT & 2) << 1) | (this.cntHT & 2);
           const att = ((attrByte >> attrShift) & 3) << 2;
 
-if(d)console.log(`render tile #${tileX} (${this.cntVT.toString(16)}, ${this.cntHT.toString(16)}): tile id=${((baseTile ? 0x100 : 0) + tile).toString(16)} @ ${tileAddress.toString(16)}, att=${att}
-  att addr=${(nt | 0x3c0 | ((this.cntHT & 0xfc) << 1) | (tileX >> 2)).toString(16)}
-  att byte=${attrByte} shift=${attrShift}`);
-
+// if(d)console.log(`render tile #${tileX} (${this.cntVT.toString(16)}, ${this.cntHT.toString(16)}): tile id=${((baseTile ? 0x100 : 0) + tile).toString(16)} @ ${tileAddress.toString(16)}, att=${att}
+//   att addr=${(nt | 0x3c0 | ((this.cntHT & 0xfc) << 1) | (tileX >> 2)).toString(16)}
+//   att byte=${attrByte} shift=${attrShift}`);
 // ${[0,1,2,3,4,5,6,7].map(i=>this.nes.mmap.loadTileScanline(tileAddress&~7|i).toString(4).padStart(8,0)).join('\n')}`);
-if(d)this.nes.debug.break = true;
+// if(d)this.nes.debug.break = true;
 
           // Render tile scanline:
           let minx = 0;
@@ -943,7 +939,6 @@ if(d)this.nes.debug.break = true;
               line >>= 2;
               di--;
               if (col) {
-// if(d)console.log(`  x=${sx} di=${di.toString(16)} imgPal=${imgPalette[col|att].toString(16)} pal=>${pal[imgPalette[col | att]].toString(16)}`);
                 targetBuffer[di] = pal[imgPalette[col | att]];
                 pixrendered[di] |= 0x100;
               }
@@ -1287,13 +1282,25 @@ if(d)this.nes.debug.break = true;
       //pri, = index
       //priTable) { = this.pixrendered
 
+    const palette = PALETTE.subarray(this.f_color, this.f_color + 0x40);
     const buffer = this.buffer;
     const priTable = this.pixrendered;
     const flipHorizontal = attr & SPRITE_HORI_FLIP;
-    const flipVertical = attr & SPRITE_VERT_FLIP;
+    const flipVertical = (attr & SPRITE_VERT_FLIP) ? 7 : 0;
     // NOTE: flipVertical is simply ^7 on the address!
     //       and for flipHorizontal we can reverse the bits
-    pal |= (attr & SPRITE_PALETTE) << 2;
+    const palAdd = (attr & SPRITE_PALETTE) << 2;
+
+const d=window.DEBUG;
+if(d)console.log(`renderSprite ${index.toString(16)} from ${srcy1}..${srcy2}
+tile=${tileAddress.toString(16)} attr=${attr.toString(16)} flip=${flipHorizontal?'H':''}${flipVertical?'V':''}
+pal=${pal} @ ${pal.byteOffset} => ${Array.from(palette).slice(pal, pal + 4).map(x=>x.toString(16).padStart(6,0)).join(',')}}
+${[0,1,2,3,4,5,6,7].map(i=>this.nes.mmap.loadTileScanline(tileAddress&~7|i).toString(4).padStart(8,0)).join('\n')}`);
+// if(d)console.log(`render tile #${tileX} (${this.cntVT.toString(16)}, ${this.cntHT.toString(16)}): tile id=${((baseTile ? 0x100 : 0) + tile).toString(16)} @ ${tileAddress.toString(16)}, att=${att}
+//   att addr=${(nt | 0x3c0 | ((this.cntHT & 0xfc) << 1) | (tileX >> 2)).toString(16)}
+//   att byte=${attrByte} shift=${attrShift}`);
+// if(d)this.nes.debug.break = true;
+
 
     let srcx1 = 0;
     let srcx2 = 8;
@@ -1316,85 +1323,29 @@ if(d)this.nes.debug.break = true;
       srcy2 = 240 - dy;
     }
 
-    if (!flipHorizontal && !flipVertical) {
-      let fbIndex = (dy << 8) + dx;
-      for (let y = 0; y < 8; y++) {
-        const line = this.nes.mmap.loadTileScanline(tileAddress);
-        let shift = 14;
-        for (let x = 0; x < 8; x++) {
-          if (x >= srcx1 && x < srcx2 && y >= srcy1 && y < srcy2) {
-            const color = (line >>> shift) & 3;
-            let tpri = priTable[fbIndex];
-            if (color && index <= (tpri & 0xff)) {
-              //console.log("Rendering upright tile to buffer");
-              buffer[fbIndex] = PALETTE[pal | color];
-              tpri = (tpri & 0xf00) | index;
-              priTable[fbIndex] = tpri;
-            }
-          }
-          shift -= 2;
-          fbIndex++;
-        }
-        fbIndex += 248;
+    let fbIndex = (dy << 8) + dx;
+    for (let y = 0; y < 8; y++) {
+      if (y < srcy1 || y >= srcy2) {
+        fbIndex += 256;
+        continue;
       }
-    } else if (flipHorizontal && !flipVertical) {
-      let fbIndex = (dy << 8) + dx;
-      for (let y = 0; y < 8; y++) {
-        const line = this.nes.mmap.loadTileScanline(tileAddress);
-        let shift = 14;
-        for (let x = 0; x < 8; x++) {
-          if (x >= srcx1 && x < srcx2 && y >= srcy1 && y < srcy2) {
-            const color = (line >>> shift) & 3;
-            let tpri = priTable[fbIndex];
-            if (color && index <= (tpri & 0xff)) {
-              buffer[fbIndex] = PALETTE[pal | color];
-              tpri = (tpri & 0xf00) | index;
-              priTable[fbIndex] = tpri;
-            }
+      let line = this.nes.mmap.loadTileScanline(tileAddress | y ^ flipVertical,
+                                                !flipHorizontal);
+      for (let x = 0; x < 8; x++) {
+        if (x >= srcx1 && x < srcx2) {
+          const color = line & 3;
+          let tpri = priTable[fbIndex];
+          if (color && index <= (tpri & 0xff)) {
+            //console.log("Rendering upright tile to buffer");
+            buffer[fbIndex] = palette[pal[palAdd | color]];
+            tpri = (tpri & 0xf00) | index;
+            priTable[fbIndex] = tpri;
           }
-          shift -= 2;
-          fbIndex++;
         }
-        fbIndex += 248;
+        line >>>= 2;
+        fbIndex++;
       }
-    } else if (flipVertical && !flipHorizontal) {
-      let fbIndex = (dy << 8) + dx;
-      for (let y = 0; y < 8; y++) {
-        let line = this.nes.mmap.loadTileScanline(tileAddress);
-        for (let x = 0; x < 8; x++) {
-          if (x >= srcx1 && x < srcx2 && y >= srcy1 && y < srcy2) {
-            const color = line & 3;
-            let tpri = priTable[fbIndex];
-            if (color && index <= (tpri & 0xff)) {
-              buffer[fbIndex] = PALETTE[pal | color];
-              tpri = (tpri & 0xf00) | index;
-              priTable[fbIndex] = tpri;
-            }
-          }
-          line >>>= 2;
-          fbIndex++;
-        }
-        fbIndex += 248;
-      }
-    } else {
-      let fbIndex = (dy << 8) + dx;
-      for (let y = 0; y < 8; y++) {
-        let line = this.nes.mmap.loadTileScanline(tileAddress);
-        for (let x = 0; x < 8; x++) {
-          if (x >= srcx1 && x < srcx2 && y >= srcy1 && y < srcy2) {
-            const color = line & 3;
-            let tpri = priTable[fbIndex];
-            if (color && index <= (tpri & 0xff)) {
-              buffer[fbIndex] = PALETTE[pal | color];
-              tpri = (tpri & 0xf00) | index;
-              priTable[fbIndex] = tpri;
-            }
-          }
-          line >>>= 2;
-          fbIndex++;
-        }
-        fbIndex += 248;
-      }
+      fbIndex += 248;
     }
   },
 
