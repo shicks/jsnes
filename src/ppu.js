@@ -1,4 +1,3 @@
-//import {Tile} from './tile.js';
 import * as utils from './utils.js';
 
 // Status flags:
@@ -11,9 +10,67 @@ export function PPU(nes) {
   this.nes = nes;
 
   // Keep Chrome happy
-  this.vram = null;
-  // this.etteRam = null;
-  // this.spriteMem = null;
+  // Pattern tables (loaded from CHR ROM, usually)
+
+  // PLAN - just dump the entire CHR ROM into the PPU's cache all at once.
+  // The mapper will tell it which pages to bring in.
+  // We will store it as tiles in a Uint32Array of 16-bit scanlines,
+  // concatenated with the reversals.  We then maintain a map from
+  // current tile number to global tile ID.
+
+  // What to do with swappable CHR RAM???  May need to allow the mapper
+  // to override some functions on PPU for that case.
+
+  // For CHR-RAM, have a table mapping real bits to pre-rendered
+  // bits in the tiles.  Then for writes we look up the effect,
+  // mask out the opposite lo/hi bits, and then update the others.
+
+  // Whether CHR data is ROM or RAM.
+  this.usingChrRam = true;
+
+  // All titles from all CHR pages, or else all tiles from CHR RAM.
+  // Each tile occupies 8 (32-bit) elements.  Each element is the
+  // rendered tile, two bits per pixel.  The low two bytes are the
+  // normal direction; the high two bytes are horizontally flipped.
+  this.patternTableFull = null;
+
+  // Currently loaded subset of pattern table, managed by a bank
+  // switcher.
+  this.patternTable = null;
+
+  // this.patternTable = null;
+  // // 8-element map for bank switching.  Each element is a base offset
+  // // into this.patternTable for 64 (i.e. 1kb worth) of tiles.  To
+  // // access the y-th row of the i-th tile, use
+  // //     this.patternTable[((i & 0x3f) << 3) | this.patternBanks[i >> 6] | y]
+  // // When using CHR rom, this is just [0, 0x200, 0x400, ..., 0xe00].
+  // this.patternBanks = null;
+
+  // TODO - consider maintaining the same indexing of the normal
+  // pattern table, but with 16-bit ints and then use the |8 entry
+  // for the reversed version.
+
+  // TODO - consider writing a page-caching library that caches all
+  // configurations of the pager (keyed by banks.join(','), maybe?)
+  // and then we can index it normally everywhere and don't need
+  // the extra indirected lookup?  it will be cheaper than copying
+  // every time, but probably cost 10x more memory? 16k * 300 combinations
+  // is still only 5MB.  We could cap the size at 100 or 1000 and
+  // evict anythint older?
+
+
+  // Nametables
+  this.nametable0 = null;
+  this.nametable1 = null;
+  this.nametable2 = null;
+  this.nametable3 = null;
+  this.nametables = null; // array of 4 refs
+  // Sprites and palettes
+  this.spriteRam = null;
+  this.paletteRam = null;
+  // Caches (lazily regenerated when needed from the above)
+  this.tileCache = null;
+  // Other registers
   this.vramAddress = null;
   this.vramTmpAddress = null;
   this.vramBufferedReadValue = null;
@@ -82,22 +139,16 @@ export function PPU(nes) {
 
 PPU.prototype = {
   reset: function() {
-    var i;
-
     // PPU Memory:
-    // This is compressed down to the minimum amount of writable
-    // memory by eliminating the regions that are normally mirrored.
-    //   $0000 .. $0fff is the four nametables (normally $2000 .. $2fff)
-    //   $1000 .. $10ff is OAM (sprite) memory (normally separate)
-    //   $1100 .. $111f is palette memory (normally $3f00 .. $3f1f)
-    this.vram = new Uint8Array(0x1120);
-    //   new Uint8Array(0x400),
-    //   new Uint8Array(0x400),
-    //   new Uint8Array(0x400),
-    //   new Uint8Array(0x400),
-    // ];
-    // this.paletteRam = new Uint8Array(0x20);
-    // this.spriteMem = new Uint8Array(0x100);
+    this.patternTable = new Uint32Array(0x1000);
+    this.usingChrRam = true;
+    this.nametable0 = new Uint8Array(0x400);
+    this.nametable1 = new Uint8Array(0x400);
+    this.nametable2 = new Uint8Array(0x400);
+    this.nametable3 = new Uint8Array(0x400);
+    this.nametables = [this.nametable0, this.nametable0, this.nametable0, this.nametable0];
+    this.spriteRam = new Uint8Array(0x100);
+    this.paletteRam = new Uint8Array(0x20);
 
     // VRAM I/O:
     this.vramAddress = null;
@@ -132,11 +183,12 @@ PPU.prototype = {
     this.status = 0; // Status flag.
 
     // Counters:
-    this.cntFV = 0;
-    this.cntV = 0;
-    this.cntH = 0;
-    this.cntVT = 0;
-    this.cntHT = 0;
+    this.cntFV = 0; // vertical subtile pixel (0..7)
+    this.cntV = 0;  // vertical nametable page (0 or 1)
+    this.cntH = 0;  // horizontal nametable page (0 or 1)
+    this.cntVT = 0; // vertical tile index (0..29?)
+    this.cntHT = 0; // horizontal tile index (0..31)
+    this.nt = null; // current nametable (this.nametables[this.cntV | this.cntH])
 
     // Registers:
     this.regFV = 0;
@@ -174,6 +226,21 @@ PPU.prototype = {
     this.updateControlReg2(0);
   },
 
+  importChrRom: function(data) {
+    this.usingChrRam = false;
+    this.patternTable = new Uint32Array(data.length >> 1);
+    for (const tile = 0; tile < data.length; tile += 0x10) {
+      for (const y = 0; y < 8; y++) {
+        const lo = data[tile | y];
+        const hi = data[tile | 8 | y];
+        const lor = reverseBits(lo);
+        const hir = reverseBits(hi);
+        this.patternTable[tile >> 1 | y] =
+            intercalateBits(lo, hi) | intercalateBits(lor, hir) << 16;
+      }
+    }
+  }
+
   // Sets Nametable mirroring.
   setMirroring: function(mirroring) {
     if (mirroring === this.currentMirroring) {
@@ -203,19 +270,34 @@ PPU.prototype = {
 
     if (mirroring === this.nes.rom.HORIZONTAL_MIRRORING) {
       // Horizontal mirroring.
-      this.nes.mmap.setNametableMapping(this.vram, 0, 0, 1, 1);
+      this.nametables = [
+        this.nametable0, this.nametable0,
+        this.nametable1, this.nametable1,
+      ];
     } else if (mirroring === this.nes.rom.VERTICAL_MIRRORING) {
       // Vertical mirroring.
-      this.nes.mmap.setNametableMapping(this.vram, 0, 1, 0, 1);
+      this.nametables = [
+        this.nametable0, this.nametable1,
+        this.nametable0, this.nametable1,
+      ];
     } else if (mirroring === this.nes.rom.SINGLESCREEN_MIRRORING) {
       // Single Screen mirroring
-      this.nes.mmap.setNametableMapping(this.vram, 0, 0, 0, 0);
+      this.nametables = [
+        this.nametable0, this.nametable0,
+        this.nametable0, this.nametable0,
+      ];
     } else if (mirroring === this.nes.rom.SINGLESCREEN_MIRRORING2) {
       // Single Screen mirroring with second nametable
-      this.nes.mmap.setNametableMapping(this.vram, 1, 1, 1, 1);
+      this.nametables = [
+        this.nametable1, this.nametable1,
+        this.nametable1, this.nametable1,
+      ];
     } else {
       // Assume Four-screen mirroring.
-      this.nes.mmap.setNametableMapping(this.vram, 0, 1, 2, 3);
+      this.nametables = [
+        this.nametable0, this.nametable1,
+        this.nametable2, this.nametable3,
+      ];
     }
   },
 
@@ -277,6 +359,7 @@ PPU.prototype = {
           this.cntH = this.regH;
           this.cntVT = this.regVT;
           this.cntHT = this.regHT;
+          this.nt = this.nametables[this.cntH | this.cntV << 1];
 
           if (this.f_bgVisibility) {
             // Render dummy scanline:
@@ -312,17 +395,15 @@ PPU.prototype = {
           // Render normally:
           if (this.f_bgVisibility) {
             if (!this.scanlineAlreadyRendered) {
-              // update scroll:
-              this.cntHT = this.regHT;
-              this.cntH = this.regH;
+              // update scroll (note: copying regH and regHT to cnt happens in renderBgScanline)
               this.renderBgScanline(true, this.scanline + 1 - 21);
             }
             this.scanlineAlreadyRendered = false;
 
             // Check for sprite 0 (next scanline):
             if (!this.hitSpr0 && this.f_spVisibility) {
-              const y0 = this.vram[0x1000];
-              const x0 = this.vram[0x1003];
+              const y0 = this.spriteRam[0];
+              const x0 = this.spriteRam[3];
               if (x0 >= -7 &&
                   x0 < 256 &&
                   y0 + 1 <= this.scanline - 20 &&
@@ -350,7 +431,7 @@ PPU.prototype = {
     var bgColor = 0;
 
     // Use first entry of image palette as BG color.
-    bgColor = PALETTE[this.f_color | this.nes.mmap.loadPpu(IMG_PALETTE)];
+    bgColor = PALETTE[this.f_color | this.paletteRam[0]];
     // TODO - for greyscale, jsnes had a switch on the
     // emphasis mode for the background (0=black, 1=green,
     // 2=blue, 4=red), but I can't find any documentation
@@ -367,8 +448,8 @@ PPU.prototype = {
 
     // Draw spr#0 hit coordinates:
     if (this.showSpr0Hit) {
-      const y0 = this.vram[0x1000];
-      const x0 = this.vram[0x1003];
+      const y0 = this.spriteRam[0];
+      const x0 = this.spriteRam[3];
       // Spr 0 position:
       if (x0 >= 0 && x0 < 256 && y0 >= 0 && y0 < 240) {
         for (i = 0; i < 256; i++) {
@@ -438,8 +519,8 @@ PPU.prototype = {
     // NOTE: nmiOnVblank does not appear to ever be used!
     this.f_nmiOnVblank = (value & 0x80) >> 7;     // 0 or 1
     this.f_tallSprites = value & 0x20;            // boolean
-    this.f_bgPatternTable = (value & 0x10) << 8;  // 0 or 0x1000
-    this.f_spPatternTable = (value & 0x08) << 9;  // 0 or 0x1000
+    this.f_bgPatternTable = (value & 0x10) << 4;  // 0 or 0x100
+    this.f_spPatternTable = (value & 0x08) << 5;  // 0 or 0x100
     this.f_addrInc = (value & 0x04) >> 2;         // 0 or 1
     this.f_nTblAddress = value & 3;               // 0, 1, 2, or 3
 
@@ -491,7 +572,7 @@ PPU.prototype = {
         sramAddress++; // Increment address
         sramAddress%=0x100;
         return tmp;*/
-    return this.vram[0x1000 | (this.sramAddress & 0xff)];
+    return this.spriteRam[this.sramAddress & 0xff];
   },
 
   // CPU Register $2004 (W):
@@ -501,7 +582,7 @@ PPU.prototype = {
     // this.vram[0x1000 | (this.sramAddress & 0xff)] = value;
     this.spriteRamWriteUpdate(this.sramAddress, value);
     this.sramAddress++; // Increment address
-    this.sramAddress %= 0x100;
+    this.sramAddress &= 0xff;
   },
 
   // CPU Register $2005:
@@ -543,6 +624,7 @@ PPU.prototype = {
       this.cntH = this.regH;
       this.cntVT = this.regVT;
       this.cntHT = this.regHT;
+      this.nt = this.nametables[this.cntH | this.cntV << 1];
 
       this.checkSprite0(this.scanline - 20);
     }
@@ -563,7 +645,7 @@ PPU.prototype = {
     this.regsToAddress();
 
     var result;
-    const value = this.nes.mmap.loadPpu(this.vramAddress);
+    const value = this.load(this.vramAddress);
     // Note: reading from [0, $3eff] has weird buffering behavior.
     // https://wiki.nesdev.com/w/index.php/PPU_registers#The_PPUDATA_read_buffer_.28post-fetch.29
     if (this.vramAddress <= 0x3eff) {
@@ -597,7 +679,7 @@ PPU.prototype = {
     this.cntsToAddress();
     this.regsToAddress();
 
-    this.writeMem(this.vramAddress, value);
+    this.write(this.vramAddress, value);
 
     // Invoke mapper latch:
     if (this.vramAddress < 0x2000) this.nes.mmap.latchAccess(this.vramAddress);
@@ -617,7 +699,7 @@ PPU.prototype = {
     for (var i = this.sramAddress; i < 256; i++) {
       // TODO(sdh): consider storing the actual CPU RAM on the cpu object
       // and then revert this to cpu.mem - but that's more complicated.
-      data = this.nes.mmap.load(baseAddress + i);
+      data = this.nes.cpu.load(baseAddress + i);
       // this.vram[0x1000 | i] = data;
       this.spriteRamWriteUpdate(i, data);
     }
@@ -645,6 +727,7 @@ PPU.prototype = {
     this.cntV = (address >> 3) & 1;
     this.cntH = (address >> 2) & 1;
     this.cntVT = (this.cntVT & 7) | ((address & 3) << 3);
+    this.nt = this.nametables[this.cntH | this.cntV << 1];
 
     address = this.vramAddress & 0xff;
     this.cntVT = (this.cntVT & 24) | ((address >> 5) & 7);
@@ -676,7 +759,7 @@ PPU.prototype = {
   },
 
   incTileCounter: function(count) {
-    for (var i = count; i !== 0; i--) {
+    for (let i = count; i !== 0; i--) {
       this.cntHT++;
       if (this.cntHT === 32) {
         this.cntHT = 0;
@@ -692,6 +775,7 @@ PPU.prototype = {
               this.cntFV &= 0x7;
             }
           }
+          this.nt = this.nametables[this.cntH | this.cntV << 1];
         }
       }
     }
@@ -891,6 +975,7 @@ PPU.prototype = {
 
     this.cntHT = this.regHT;
     this.cntH = this.regH;
+    this.nt = this.nametables[this.cntH | this.cntV << 1];
     let nt = 0x2000 | (((this.cntV << 1) | this.cntH) << 10);
     //let nt = this.nameTable[(this.cntV << 1) | this.cntH];
 
@@ -899,7 +984,6 @@ PPU.prototype = {
 
       // palette with color mode included.
       const pal = PALETTE.subarray(this.f_color, this.f_color + 0x40);
-      const imgPalette = this.nes.mmap.loadPalette(IMG_PALETTE);
       var pixrendered = this.pixrendered;
       var targetBuffer = bgbuffer ? this.bgbuffer : this.buffer;
 
@@ -908,14 +992,15 @@ PPU.prototype = {
       for (let tileX = 0; tileX < 32; tileX++) {
         if (scan >= 0) {
           // Check the current value of the nametable.
-          const tile = this.nes.mmap.loadPpu(nt | (this.cntVT << 5) | this.cntHT);
-          const tileAddress = baseTile | (tile << 4) | this.cntFV;
-          let line = this.nes.mmap.loadTileScanline(tileAddress);
-          const attrByte =
-              this.nes.mmap.loadPpu(
-                  nt | 0x3c0 | ((this.cntVT & 0xfc) << 1) | (this.cntHT >> 2));
-          const attrShift = ((this.cntVT & 2) << 1) | (this.cntHT & 2);
-          const att = ((attrByte >> attrShift) & 3) << 2;
+          const tile = this.nt[this.cntVT << 5 | this.cntHT);
+          const tileAddress = baseTile | (tile << 3) | this.cntFV;
+          let line = this.patternTable[tileAddress << 3 | this.patternBanks[tile >> 6] | this.cntFV]
+          //let line = this.nes.mmap.loadTileScanline(tileAddress);
+          const attrByte = this.nt[0x3c0 | (this.cntVT & 0x1c) << 1 | this.cntHT >> 2];
+              // this.nes.mmap.loadPpu(
+              //     nt | 0x3c0 | ((this.cntVT & 0xfc) << 1) | (this.cntHT >> 2));
+          const attrShift = (this.cntVT & 2) << 1 | (this.cntHT & 2);
+          const att = (attrByte >> attrShift & 3) << 2;
 
 // if(d)console.log(`render tile #${tileX} (${this.cntVT.toString(16)}, ${this.cntHT.toString(16)}): tile id=${((baseTile ? 0x100 : 0) + tile).toString(16)} @ ${tileAddress.toString(16)}, att=${att}
 //   att addr=${(nt | 0x3c0 | ((this.cntHT & 0xfc) << 1) | (tileX >> 2)).toString(16)}
@@ -939,7 +1024,8 @@ PPU.prototype = {
               line >>= 2;
               di--;
               if (col) {
-                targetBuffer[di] = pal[imgPalette[col | att]];
+                targetBuffer[di] =
+                    PALETTE[this.f_color | this.paletteRam[col | att]];
                 pixrendered[di] |= 0x100;
               }
             }
@@ -962,8 +1048,8 @@ PPU.prototype = {
       this.cntVT++;
       if (this.cntVT === 30) {
         this.cntVT = 0;
-        this.cntV++;
-        this.cntV %= 2;
+        this.cntV ^= 1;
+        this.nt = this.nametables[this.cntH | this.cntV << 1];
       } else if (this.cntVT === 32) {
         this.cntVT = 0;
       }
@@ -971,14 +1057,14 @@ PPU.prototype = {
   },
 
   renderSpritesPartially: function(startscan, scancount, bgPri) {
-    let index = 0x1000;
+    let index = 0;
     if (this.f_spVisibility) {
-      const pal = this.nes.mmap.loadPalette(SPR_PALETTE);
+      const pal = this.paletteRam.subarray(0x10, 0x20);
       for (let i = 0; i < 64; i++) {
-        const y = this.vram[index++]; // read right from vram (OAM isn't mapped)
-        const tile = this.vram[index++] << 4; // 16 bytes per tile
-        const attr = this.vram[index++];
-        const x = this.vram[index++];
+        const y = this.spriteRam[index++]; // read right from vram (OAM isn't mapped)
+        const tile = this.spriteRam[index++];
+        const attr = this.spriteRam[index++];
+        const x = this.spriteRam[index++];
         if ((attr & SPRITE_PRIORITY_BG) == bgPri &&
             x >= 0 && x < 256 && y + 8 >= startscan && y < startscan + scancount) {
           // Show sprite.
@@ -992,23 +1078,23 @@ PPU.prototype = {
             // if (y + 8 > startscan + scancount) {
             //   srcy2 = startscan + scancount - y + 1;
             // }
-
+            const spr = this.f_spPatternTable | tile;
             this.renderSprite(
                 i,
-                this.f_spPatternTable | tile, 
+                (this.patternBanks[spr >>> 6] | spr & 0x3f) << 3,
                 Math.max(startscan - y - 1, 0),
                 // y < startscan ? startscan - y - 1 : 0;
                 Math.min(startscan + scancount - y + 1, 8),
                 // y + 8 > startscan + scancount ? startscan + scancount - y + 1 : 8,
                 x,
                 y + 1,
-                attr,
-                pal);
+                attr);
 
           } else {
             // 8x16 sprites
             let top = tile;
-            if (top & 0x10) top ^= 0x1010;
+            if (top & 1) top ^= 0x101;
+            top = (this.patternBanks[top >>> 6] | top & 0x3f) << 3;
 
             // var srcy1 = 0;
             // var srcy2 = 8;
@@ -1023,7 +1109,7 @@ PPU.prototype = {
 
             this.renderSprite(
                 i,
-                top + (attr & SPRITE_VERT_FLIP ? 1 : 0),
+                top + (attr & SPRITE_VERT_FLIP ? 8 : 0),
                 // y < startscan ? startscan - y - 1 : 0,
                 // should this by - y + 1
                 // y + 8 > startscan + scancount ? startscan + scancount - y : 8,
@@ -1031,8 +1117,7 @@ PPU.prototype = {
                 Math.min(startscan + scancount - y, 8),
                 x,
                 y + 1,
-                attr,
-                pal);
+                attr);
 
             srcy1 = 0;
             srcy2 = 8;
@@ -1047,13 +1132,12 @@ PPU.prototype = {
 
             this.renderSprite(
                 i,
-                top + (attr & SPRITE_VERT_FLIP ? 0 : 1),
+                top + (attr & SPRITE_VERT_FLIP ? 0 : 8),
                 Math.max(startscan - y - 9, 0),
                 Math.min(startscan + scancount - y - 8, 0),
                 x,
                 y + 9,
-                attr,
-                pal);
+                attr);
             // this.ptTile[top + (this.vertFlip[i] ? 0 : 1)].render(
             //   this.buffer,
             //   srcy1,
@@ -1106,31 +1190,38 @@ PPU.prototype = {
       }
     }
     if (addr < 0) return false; // not in range
-    let line = this.nes.mmap.loadPpu(addr) | this.nes.mmap.loadPpu(addr ^ 8);
-    if (attr & SPRITE_HORI_FLIP) line = utils.reverseBits(line);
+    let line = this.patternTable[this.patternBanks[0] | y];
+    line = (line & TILE_LO_MASK) | (line & TILE_HI_MASK) >> 1;
+    line = (attr & SPRITE_HORI_FLIP) ? line >>> 16 : line & 0xffff;
 
     // now find the background value
-    let cntH = this.regH ? 0x400 : 0;
-    let cntV = this.regV ? 0x800 : 0;
-    let scanlineY = (this.regVT << 3 | this.regFV) + y;
+    let cntH = this.regH ? 1 : 0;
+    let cntV = this.regV ? 2 : 0;
+    let scanlineY = (this.regVT << 3 | this.regFV) + scan;
     let spriteX = (this.HT << 3 | this.FH) + x;
-    if (scanlineY > 0xff) {
-      cntV ^= 0x800;
-      scanlineY &= 0xff;
+    if (scanlineY > 0xf0) {
+      cntV ^= 2;
+      scanlineY -= 0xf0;
     }
     let tileX = spriteX >> 3;
-    let offsetX = spriteX & 7;
+    let offsetX = 2 * (spriteX & 7); // *2 to work around alternate zeros
     if (tileX > 0x1f) {
-      cntH ^= 0x400;
+      cntH ^= 1;
       tileX &= ~0x20;
     }
     let bgTile =
         this.f_spPatternTable |
-        (this.nes.mmap.loadPpu(
-            cntH | cntV | ((scanlineY & 0xf8) << 2) | tileX) << 4);
+        this.nametables[cntH | cntV][((scanlineY & 0xf8) << 2) | tileX];
     let bgLine =
-        (this.nes.mmap.loadPpu(bgTile) | this.nes.mmap.loadPpu(bgTile ^ 8)) <<
-            offsetX;
+        this.patternTable[
+            this.patternBanks[bgTile >>> 6] | (bgTile & 0x3f) << 3 | scanlineY & 7];
+    bgLine = (bgLine & TILE_LO_MASK) | (bgLine & TILE_HI_MASK) >> 1;
+    bgLine = (bgLine & 0xffff) << offsetX;
+        // (this.nes.mmap.loadPpu(
+        //     cntH | cntV | ((scanlineY & 0xf8) << 2) | tileX) << 4);
+    // let bgLine =
+    //     (this.nes.mmap.loadPpu(bgTile) | this.nes.mmap.loadPpu(bgTile ^ 8)) <<
+    //         offsetX;
     let hit = bgLine & line;
     if (!hit && offsetX) {
       // try the second tile.
@@ -1141,17 +1232,25 @@ PPU.prototype = {
       }
       bgTile =
           this.f_spPatternTable |
-          (this.nes.mmap.loadPpu(
-              cntH | cntV | ((scanlineY & 0xf8) << 2) | tileX) << 4);
+          this.nametables[cntH | cntV][((scanlineY & 0xf8) << 2) | tileX];
       bgLine =
-          (this.nes.mmap.loadPpu(bgTile) | this.nes.mmap.loadPpu(bgTile ^ 8)) >>>
-              (8 - offsetX);
+          this.patternTable[
+              this.patternBanks[bgTile >>> 6] | (bgTile & 0x3f) << 3 | scanlineY & 7];
+      bgLine = (bgLine & TILE_LO_MASK) | (bgLine & TILE_HI_MASK) >> 1;
+      bgLine = (bgLine & 0xffff) >>> (16 - offsetX);
+      // bgTile =
+      //     this.f_spPatternTable |
+      //     (this.nes.mmap.loadPpu(
+      //         cntH | cntV | ((scanlineY & 0xf8) << 2) | tileX) << 4);
+      // bgLine =
+      //     (this.nes.mmap.loadPpu(bgTile) | this.nes.mmap.loadPpu(bgTile ^ 8)) >>>
+      //         (8 - offsetX);
       hit = bgLine & line;
     }
 
     if (hit) {
       // There's a hit, find the X position.
-      const hitX = x + Math.clz32(hit) - 24;
+      const hitX = x + (Math.clz32(hit) - 16) / 2;
       if (hitX >= 0 && hitX < 256 && this.pixrendered[scan << 8 | hitX]) {
         this.spr0HitX = hitX;
         this.spr0HitY = scan;
@@ -1165,18 +1264,62 @@ PPU.prototype = {
     this.status |= STATUS_SPRITE0HIT;
   },
 
+  load: function(address) {
+    if (address < 0x2000) {
+      // look up the bank
+      const tile = address >>> 4;
+      const y = address & 7;
+      const addr = this.patternBanks[tile >>> 6] | ((tile & 0x3f) << 3);
+      if (address & 8) {
+        return collateBits(this.patternTable[addr] >> 1 & TILE_LO_MASK);
+      } else {
+        return collateBits(this.patternTable[addr] & TILE_LO_MASK);
+      }        
+    } else {
+      if (address < 0x3f00) {
+        return this.nametables[address >>> 10 & 1][address & 0x3ff];
+      } else {
+        return this.paletteRam[address & 0x1f];
+      }
+    }
+  }
+
   // This will write to PPU memory, and
   // update internally buffered data
   // appropriately.
-  writeMem: function(address, value) {
+  write: function(address, value) {
     // this.triggerRendering();
     // nametable writes trigger sprite0 check but not rendering ??
     // but that doesn't seem to actually matter...?
     // if ((address & 0xe000) == 0x2000 && (address & 0x03c0) != 0x3c0) {
     //   this.checkSprite0(this.scanline - 20);
     // }
-    this.nes.mmap.writePpu(address, value);
+    // this.nes.mmap.writePpu(address, value);
     // this.vramMem[address] = value;
+
+    if (address < 0x2000) {
+      if (!this.usingChrRam) return;
+      const tile = address >>> 4;
+      const y = address & 7;
+      const addr = this.patternBanks[tile >>> 6] | ((tile & 0x3f) << 3);
+      if (address & 8) {
+        // write to the high bit, preserve the low bit
+        this.patternTable[addr] =
+            this.patternTable[addr] & TILE_LO_MASK | (TILE_WRITE[value] << 1);
+      } else {
+        // write to the low bit, preserve the high bit
+        this.patternTable[addr] =
+            this.patternTable[addr] & TILE_HI_MASK | TILE_WRITE[value];
+      }
+    } else {
+      if (address < 0x3f00) {
+        // nametable write
+        this.nametables[address >>> 10 & 1][address & 0x3ff] = value;
+      } else {
+        // palette write
+        this.paletteRam[address & 0x1f] = value;
+      }
+    }
 
     // Update internally buffered data:
     // if (address < 0x2000) {
@@ -1201,6 +1344,19 @@ PPU.prototype = {
     //   this.updatePalettes();
     // }
   },
+
+  loadChrPage(bank, page, size) {
+    // ex: loadChrPage(0x1000, 5, 0x800)
+    //     0x800 has 128 tiles
+    //     0x1000 is at patternBanks[4] and [5].
+    //     2k page 5 is actually 1k pages 10 and 11 
+    if (size < 0x400) throw new Error('cannot bank switch less than 1K of CHR ROM');
+    if (page < 0) page += Math.floor(this.patternTable.length * 2 / size);
+    let value = page * size >>> 10;
+    for (let i = bank; i < bank + size; i += 0x400) {
+      this.patternBanks[i >>> 10] = value++;
+    }
+  }
 
   // // Reads data from $3f00 to $f20
   // // into the two buffered palettes.
@@ -1260,7 +1416,7 @@ PPU.prototype = {
   // data with this new byte of info.
   spriteRamWriteUpdate: function(address, value) {
     if (!(address & 0xfc)) this.checkSprite0(this.scanline - 20);
-    this.vram[0x1000 | address] = value;
+    this.spriteRam[address] = value;
   },
 
   doNMI: function() {
@@ -1275,14 +1431,14 @@ PPU.prototype = {
     return this.nes.ppu.buffer[(y << 8) + x] === 0xffffff;
   },
 
-  renderSprite: function(index, tileAddress, srcy1, srcy2, dx, dy, attr, pal) {
+  renderSprite: function(index, tileAddress, srcy1, srcy2, dx, dy, attr) {
       // palette, = attr & 3
       // flipHorizontal, = attr & 040
       // flipVertical, = attr & 0x80
       //pri, = index
       //priTable) { = this.pixrendered
 
-    const palette = PALETTE.subarray(this.f_color, this.f_color + 0x40);
+    // const palette = PALETTE.subarray(this.f_color, this.f_color + 0x40);
     const buffer = this.buffer;
     const priTable = this.pixrendered;
     const flipHorizontal = attr & SPRITE_HORI_FLIP;
@@ -1291,11 +1447,11 @@ PPU.prototype = {
     //       and for flipHorizontal we can reverse the bits
     const palAdd = (attr & SPRITE_PALETTE) << 2;
 
-const d=window.DEBUG;
-if(d)console.log(`renderSprite ${index.toString(16)} from ${srcy1}..${srcy2}
-tile=${tileAddress.toString(16)} attr=${attr.toString(16)} flip=${flipHorizontal?'H':''}${flipVertical?'V':''}
-pal=${pal} @ ${pal.byteOffset} => ${Array.from(palette).slice(pal, pal + 4).map(x=>x.toString(16).padStart(6,0)).join(',')}}
-${[0,1,2,3,4,5,6,7].map(i=>this.nes.mmap.loadTileScanline(tileAddress&~7|i).toString(4).padStart(8,0)).join('\n')}`);
+// const d=window.DEBUG;
+// if(d)console.log(`renderSprite ${index.toString(16)} from ${srcy1}..${srcy2}
+// tile=${tileAddress.toString(16)} attr=${attr.toString(16)} flip=${flipHorizontal?'H':''}${flipVertical?'V':''}
+// pal=${pal} @ ${pal.byteOffset} => ${Array.from(palette).slice(pal, pal + 4).map(x=>x.toString(16).padStart(6,0)).join(',')}}
+// ${[0,1,2,3,4,5,6,7].map(i=>this.nes.mmap.loadTileScanline(tileAddress&~7|i).toString(4).padStart(8,0)).join('\n')}`);
 // if(d)console.log(`render tile #${tileX} (${this.cntVT.toString(16)}, ${this.cntHT.toString(16)}): tile id=${((baseTile ? 0x100 : 0) + tile).toString(16)} @ ${tileAddress.toString(16)}, att=${att}
 //   att addr=${(nt | 0x3c0 | ((this.cntHT & 0xfc) << 1) | (tileX >> 2)).toString(16)}
 //   att byte=${attrByte} shift=${attrShift}`);
@@ -1329,15 +1485,18 @@ ${[0,1,2,3,4,5,6,7].map(i=>this.nes.mmap.loadTileScanline(tileAddress&~7|i).toSt
         fbIndex += 256;
         continue;
       }
-      let line = this.nes.mmap.loadTileScanline(tileAddress | y ^ flipVertical,
-                                                !flipHorizontal);
+      let line = this.patternTable[tileAddress | y ^ flipVertical];
+      line = flipHorizontal ? line >>> 16 : line & 0xffff;
+// this.nes.mmap.loadTileScanline(tileAddress | y ^ flipVertical,
+//                                                 !flipHorizontal);
       for (let x = 0; x < 8; x++) {
         if (x >= srcx1 && x < srcx2) {
           const color = line & 3;
           let tpri = priTable[fbIndex];
           if (color && index <= (tpri & 0xff)) {
             //console.log("Rendering upright tile to buffer");
-            buffer[fbIndex] = palette[pal[palAdd | color]];
+            buffer[fbIndex] =
+                PALETTE[this.f_color | this.paletteRam[0x10 | palAdd | color]];
             tpri = (tpri & 0xf00) | index;
             priTable[fbIndex] = tpri;
           }
@@ -1559,6 +1718,61 @@ const PALETTE = (() => {
   }
 console.log(Array.from(palette, x=>`$${x.toString(16).padStart(6,0)}`));
   return palette;
+})();
+
+const intercalateBits = (lo, hi) => {
+  let value = lo | hi << 8;
+  let tmp = (value ^ (value >> 4)) & 0x00f0;
+  value ^= (tmp ^ (tmp << 4));
+  tmp = (value ^ (value >> 2)) & 0x0c0c;
+  value ^= (tmp ^ (tmp << 2));
+  tmp = (value ^ (value >> 1)) & 0x2222;
+  return value ^ (tmp ^ (tmp << 1));
+};
+
+const reverseBits = (x) => {
+  return ((x * 0x0802 & 0x22110) | (x * 0x8020 & 0x88440)) * 0x10101 >> 16;
+};
+
+// converts 0a0b0c0d0e0f0g0h into abcdefgh, useful for reading pattern tables.
+const collateBits = (value) => {
+  tmp = (value ^ (value >> 1)) & 0x22222222;
+  value ^= (tmp ^ (tmp << 1));
+  tmp = (value ^ (value >> 2)) & 0x0c0c0c0c;
+  value ^= (tmp ^ (tmp << 2));
+  tmp = (value ^ (value >> 4)) & 0x00f000f0;
+  return value ^ (tmp ^ (tmp << 4));
+};
+
+// The following constants are for writing CHR RAM.  We store a single
+// source of truth in the "pre-rendered" tiles.  
+ 256-element look-up table for writing bits of CHR RAM.
+const TILE_LO_MASK = 0b01010101010101010101010101010101; // 0x55555555
+const TILE_HI_MASK = 0b10101010101010101010101010101010; // 0xaaaaaaaa
+const TILE_WRITE = (() => {
+  const bits = [
+    0b01000000000000000000000000000001, // 0x40000001
+    0b00010000000000000000000000000100, // 0x10000004
+    0b00000100000000000000000000010000, // 0x04000010
+    0b00000001000000000000000001000000, // 0x01000040
+    0b00000000010000000000000100000000, // 0x00400100
+    0b00000000000100000000010000000000, // 0x00100400
+    0b00000000000001000001000000000000, // 0x00041000
+    0b00000000000000010100000000000000, // 0x00014000
+  ];
+  const out = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let x = i;
+    let y = 0;
+    let s = 0;
+    while (x) {
+      if (x & 1) y |= bits[s];
+      x >>>= 1;
+      s++;
+    }
+    out[i] = y;
+  }
+  return out;
 })();
 
 const IMG_PALETTE = 0x3f00;

@@ -75,3 +75,90 @@ export class BiMap extends Map {
     Map.prototype.clear.call(this.reverse);
   }
 }
+
+// Note: we'd need different handling for RAM banks, since we want to preserve
+// writes.  And if the same page is mirrored into two banks at once, we're in
+// even more trouble...
+export class RomBankSwitcher {
+  constructor(data, windowSize, cacheSize = 128) {
+    /** @const {!TypedArray} The full data. */
+    this.data = data;
+    /** @const {number} The total amount that can be addressed at once. */
+    this.windowSize = powerOfTwo(windowSize);
+    /** @const {number} Max size of the LRU cache. */
+    this.cacheSize = cacheSize;
+    /** @type {number} The log of the current size of each page - may decrease. */
+    this.pageSize = this.windowSize;
+    /** @type {!Map<string, !TypedArray>} */
+    this.cache = new Map();
+    /** @type {!Array<number>} */
+    this.current = [0];
+  }
+
+  buffer() {
+    // Check the cache.
+    const key = this.current.join(',');
+    let entry = this.cache.get(key);
+    if (entry) {
+      // update the LRU, return it
+      this.cache.delete(key);
+      this.cache.set(key, entry);
+      return entry;
+    }
+    // Keep the size in check.
+    if (this.cache.size >= this.cacheSize) {
+      console.log('evicting from swap cache');
+      this.cache.delete(this.cache.keys().next());
+    }
+    // Construct a new entry.
+    entry = new this.data.constructor(this.windowSize);
+    const logPage = log2(this.pageSize);
+    for (let i = 0; i < this.current.length; i++) {
+      const page = this.current[i] << logPage;
+      entry.set(this.data.subarray(page, page + this.pageSize), i << logPage);
+    }
+    this.cache.set(key, entry);
+    return entry;
+  }
+
+  swap(address, bank, size) {
+    // Shrink pageSize to fit.
+    size = powerOfTwo(size);
+    bank = (bank >>> 0) & (powerOfTwo(this.data.length / size) - 1);
+    if (size < this.pageSize) this.divide(size);
+    address /= this.pageSize;
+    size /= this.pageSize;
+    bank *= size;
+    const end = address + size;
+    while (address < end) this.current[address++] = bank++;
+  }
+
+  restore(banks) {
+    const size = this.windowSize / banks.length;
+    let addr = 0;
+    for (const bank of banks) {
+      this.swap(addr, bank, size);
+      addr += size;
+    }
+  }
+
+  snapshot() {
+    return this.current.slice();
+  }
+
+  divide(size) {
+    const newPageSize = powerOfTwo(size);
+    const factor = (1 << this.pageSize) / newPageSize;
+    this.current = divideBanks(this.current, factor);
+    const divideKey = (k) => divide(k.split(',').map(Number), factor).join(',');
+    this.cache = new Map([...this.cache].map(([k, v]) => [divideKey(k), v]));
+  }
+}
+
+/** @return {!Array<number>} The new list of divided banks. */
+const seq = (n) => new Array(n).fill(0).map((_, i) => i);
+const divideBanks = (banks, factor) =>
+    [].concat(...banks.map(x => seq(factor).map(i => factor * x + i)));
+
+const powerOfTwo = (x) => 0x80000000 >>> Math.clz32(x);
+const log2 = (x) => 31 - Math.clz32(x);

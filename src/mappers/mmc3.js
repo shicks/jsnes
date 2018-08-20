@@ -25,6 +25,9 @@ export class MMC3 extends NROM {
   }
 
   initializePrgRom() {
+    
+
+
     this.addRomBank(0x8000, 0xa000, this.nes.rom.prgPage(0, 0x2000));
     this.addRomBank(0xa000, 0xc000, this.nes.rom.prgPage(1, 0x2000));
     this.addRomBank(0xc000, 0xe000, this.nes.rom.prgPage(-2, 0x2000));

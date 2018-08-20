@@ -169,13 +169,13 @@ ROM.prototype = {
   },
 
   chrPage: function(page, size) {
-    if (page < 0) page = Math.floor(this.vrom.length / size) + page;
+    if (page < 0) page += Math.floor(this.vrom.length / size);
     const offset = page * size % (this.vrom.length & ~(size - 1));
     return this.vrom.subarray(offset, offset + size);
   },
 
   prgPage: function(page, size) {
-    if (page < 0) page = Math.floor(this.rom.length / size) + page;
+    if (page < 0) page += Math.floor(this.rom.length / size);
     const offset = page * size % (this.rom.length & ~(size - 1));
     return this.rom.subarray(offset, offset + size);
   },

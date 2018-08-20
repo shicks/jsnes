@@ -6,6 +6,10 @@ export function CPU(nes) {
 
   // Keep Chrome happy
   this.ram = null;
+  this.prgRom8 = null;
+  this.prgRomA = null;
+  this.prgRomC = null;
+  this.prgRomE = null;
   this.REG_ACC = null;
   this.REG_X = null;
   this.REG_Y = null;
@@ -197,7 +201,7 @@ CPU.prototype = {
       this.irqRequested = false;
     }
 
-    var opcode = this.nes.mmap.load(this.REG_PC + 1);
+    var opcode = this.load(this.REG_PC + 1);
     var opinf = this.opdata[opcode];
     var cycleCount = opinf >> 24;
     var cycleAdd = 0;
@@ -209,7 +213,7 @@ CPU.prototype = {
     var opaddr = this.REG_PC;
     this.REG_PC += (opinf >> 16) & 0xff;
 
-    this.nes.debug.logCpu(opcode, opaddr + 1);
+    if (this.nes.debug) this.nes.debug.logCpu(opcode, opaddr + 1);
 
     var logmem = false;
     var addr = 0;
@@ -325,10 +329,8 @@ CPU.prototype = {
         // at the given location.
         const a = this.load16bit(opaddr + 2); // Find op
         // Read from address given in op
-        addr =
-            this.nes.mmap.load(a) +
-            (this.nes.mmap.load((a & 0xff00) | (((a & 0xff) + 1) & 0xff)) << 8);
-        this.nes.debug.logMem(Debug.MEM_RD16, a, addr);
+        addr = this.load(a) + (this.load((a & 0xff00) | (((a & 0xff) + 1) & 0xff)) << 8);
+        if (this.nes.debug) this.nes.debug.logMem(Debug.MEM_RD16, a, addr);
         logmem = true;
         break;
       }
@@ -1106,20 +1108,33 @@ CPU.prototype = {
   },
 
   load: function(addr, opt_log) {
-    const result = this.nes.mmap.load(addr);
-    if (opt_log) this.nes.debug.logMem(Debug.MEM_RD, addr, result);
+    let result;
+    if (addr < 0x8000) {
+      result = addr < 0x2000 ? this.ram[addr & 0x7ff] : this.nes.mmap.load(addr);
+    } else {
+      if (addr < 0xc000) {
+        result = addr < 0xa000 ? this.prgRom8[addr & 0x1fff] : this.prgRomA[addr & 0x1fff];
+      } else {
+        result = addr < 0xe000 ? this.prgRomC[addr & 0x1fff] : this.prgRomE[addr & 0x1fff];
+      }
+    }
+    if (opt_log && this.nes.debug) this.nes.debug.logMem(Debug.MEM_RD, addr, result);
     return result;
   },
 
   load16bit: function(addr, opt_log) {
-    const result = this.nes.mmap.load(addr) | (this.nes.mmap.load(addr + 1) << 8);
-    if (opt_log) this.nes.debug.logMem(Debug.MEM_RD16, addr, result);
+    const result = this.load(addr) | (this.load(addr + 1) << 8);
+    if (opt_log && this.nes.debug) this.nes.debug.logMem(Debug.MEM_RD16, addr, result);
     return result;
   },
 
   write: function(addr, val, opt_log) {
-    this.nes.mmap.write(addr, val);
-    if (opt_log) this.nes.debug.logMem(Debug.MEM_WR, addr, val);
+    if (addr < 0x2000) {
+      this.ram[addr & 0x7fff] = val;
+    } else {
+      this.nes.mmap.write(addr, val);
+    }
+    if (opt_log && this.nes.debug) this.nes.debug.logMem(Debug.MEM_WR, addr, val);
   },
 
   requestIrq: function(type) {
@@ -1134,8 +1149,8 @@ CPU.prototype = {
   },
 
   push: function(value) {
-    this.nes.mmap.write(this.REG_SP, value);
-    this.nes.debug.logMem(Debug.MEM_WR, this.REG_SP, value);
+    this.ram[this.REG_SP] = value;
+    if (this.nes.debug) this.nes.debug.logMem(Debug.MEM_WR, this.REG_SP, value);
     this.REG_SP--;
     this.REG_SP = 0x0100 | (this.REG_SP & 0xff);
   },
@@ -1147,8 +1162,8 @@ CPU.prototype = {
   pull: function() {
     this.REG_SP++;
     this.REG_SP = 0x0100 | (this.REG_SP & 0xff);
-    const value = this.nes.mmap.load(this.REG_SP);
-    this.nes.debug.logMem(Debug.MEM_RD, this.REG_SP, value);
+    const value = this.ram[this.REG_SP];
+    if (this.nes.debug) this.nes.debug.logMem(Debug.MEM_RD, this.REG_SP, value);
     return value;
   },
 
@@ -1161,8 +1176,8 @@ CPU.prototype = {
   },
 
   doNonMaskableInterrupt: function(status) {
-    this.nes.debug.logInterrupt(Debug.NMI);
-    if ((this.nes.mmap.load(0x2000) & 128) !== 0) {
+    if (this.nes.debug) this.nes.debug.logInterrupt(Debug.NMI);
+    if ((this.load(0x2000) & 128) !== 0) {
       // Check whether VBlank Interrupts are enabled
 
       this.REG_PC_NEW++;
@@ -1171,21 +1186,19 @@ CPU.prototype = {
       //this.F_INTERRUPT_NEW = 1;
       this.push(status);
 
-      this.REG_PC_NEW =
-        this.nes.mmap.load(0xfffa) | (this.nes.mmap.load(0xfffb) << 8);
+      this.REG_PC_NEW = this.load(0xfffa) | (this.load(0xfffb) << 8);
       this.REG_PC_NEW--;
     }
   },
 
   doResetInterrupt: function() {
-    this.nes.debug.logInterrupt(Debug.RESET);
-    this.REG_PC_NEW =
-      this.nes.mmap.load(0xfffc) | (this.nes.mmap.load(0xfffd) << 8);
+    if (this.nes.debug) this.nes.debug.logInterrupt(Debug.RESET);
+    this.REG_PC_NEW = this.load(0xfffc) | (this.load(0xfffd) << 8);
     this.REG_PC_NEW--;
   },
 
   doIrq: function(status) {
-    this.nes.debug.logInterrupt(Debug.IRQ);
+    if (this.nes.debug) this.nes.debug.logInterrupt(Debug.IRQ);
     this.REG_PC_NEW++;
     this.push((this.REG_PC_NEW >> 8) & 0xff);
     this.push(this.REG_PC_NEW & 0xff);
@@ -1193,8 +1206,7 @@ CPU.prototype = {
     this.F_INTERRUPT_NEW = 1;
     this.F_BRK_NEW = 0;
 
-    this.REG_PC_NEW =
-      this.nes.mmap.load(0xfffe) | (this.nes.mmap.load(0xffff) << 8);
+    this.REG_PC_NEW = this.load(0xfffe) | (this.load(0xffff) << 8);
     this.REG_PC_NEW--;
   },
 
