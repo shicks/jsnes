@@ -57,6 +57,10 @@ export class NROM {
     // has CHR RAM swapping, it will need special support anyway.
   }
 
+  /**
+   * Handles register loads.  Loads from CPU RAM or PRG ROM will not
+   * work correctly and should instead be handled by CPU.prototype.load.
+   */
   load(address) {
     if (address < 0x6000) {
       if (address < 0x4000) {
@@ -67,6 +71,10 @@ export class NROM {
     return this.prgRam[address & 0x1fff];
   }
 
+  /**
+   * Handles register writes.  Writes to CPU RAM will not work correctly and
+   * should instead be handled by CPU.prototype.load.
+   */
   write(address, value) {
     if (address < 0x6000) {
       if (address < 0x4000) {
@@ -81,6 +89,7 @@ export class NROM {
     } 
   }
 
+  /** Handles all loads from $2000 .. $3fff. */
   load2(address) {
     address &= 0x7;
     if (address < 4) {
@@ -106,6 +115,7 @@ export class NROM {
     return 0;
   }
 
+  /** Handles all writes to $2000 .. $3fff. */
   write2(address, value) {
     address &= 0x7;
     if (address < 4) {
@@ -142,6 +152,7 @@ export class NROM {
     }
   }
 
+  /** Handles all loads from $4000 .. $5fff. */
   load4(address) {
     if (address == 0x4015) {
       // 4015 APU Status
@@ -156,6 +167,7 @@ export class NROM {
     return 0;
   }
 
+  /** Handles all writes to $4000 .. $5fff. */
   write4(address, value) {
     if (address < 0x4016) {
       if (address == 0x4014) {
@@ -171,6 +183,7 @@ export class NROM {
     }
   }
 
+  /** Handles all writes to $8000 .. $ffff. */
   write8(address, value) {}
 
   initializePrgRam() {
@@ -188,14 +201,13 @@ export class NROM {
   }
 
   initializeChrRomSwitcher() {
-    if (this.nes.rom.vrom && this.nes.rom.vrom.length) {
-      this.nes.ppu.importChrRom(this.nes.rom.vrom);
-      this.nes.ppu.usingChrRam = false;
+    this.nes.ppu.importChrRom(this.nes.rom.vrom);
+    if (!this.nes.ppu.usingChrRam) {
       this.chrRomSwitcher =
-        new utils.RomBankSwitcher(this.nes.ppu.patternTableFull, 0x2000);
+          new utils.RomBankSwitcher(this.nes.ppu.patternTableFull, 0x2000);
     } else {
-      this.chrRam = new Uint8Array(0x2000);
-      this.nes.ppy.patternTable = this.chrRam;
+      this.chrRam = new Uint16Array(0x2000);
+      this.nes.ppu.patternTableFull = this.nes.ppu.patternTable = this.chrRam;
     }
   }
 
@@ -354,6 +366,8 @@ export class NROM {
       joypadLastWrite: this.joypadLastWrite,
       prgRam: Array.from(this.prgRam),
       prg: this.prgRomSwitcher.snapshot(), //this.serializeBanks(this.cpuBanks),
+      chr: this.chrRomSwitcher ?
+          this.chrRomSwitcher.snapshot() : Array.from(this.chrRam),
     };
   }
 
@@ -363,5 +377,10 @@ export class NROM {
     this.joypadLastWrite = s.joypadLastWrite;
     this.prgRam = Uint8Array.from(s.prgRam);
     this.prgRomSwitcher.restore(s.prg);
+    if (this.chrRomSwitcher) {
+      this.chrRomSwitcher.restore(s.chr);
+    } else {
+      this.chrRam = Uint16Array.from(s.chr);
+    }
   }
 }

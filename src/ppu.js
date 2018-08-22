@@ -27,7 +27,7 @@ export function PPU(nes) {
   // mask out the opposite lo/hi bits, and then update the others.
 
   // Whether CHR data is ROM or RAM.
-  this.usingChrRam = true;
+  this.usingChrRam = null;
 
   // All titles from all CHR pages, or else all tiles from CHR RAM.
   // Each tile occupies 8 (32-bit) elements.  Each element is the
@@ -145,7 +145,7 @@ PPU.prototype = {
   reset: function() {
     // PPU Memory:
     this.patternTable = new Uint16Array(0x2000);
-    this.usingChrRam = true;
+    this.usingChrRam = false;
     this.nametable0 = new Uint8Array(0x400).fill(0xff);
     this.nametable1 = new Uint8Array(0x400).fill(0xff);
     this.nametable2 = new Uint8Array(0x400).fill(0xff);
@@ -231,17 +231,21 @@ PPU.prototype = {
   },
 
   importChrRom: function(data) {
-    this.usingChrRam = false;
-    this.patternTableFull = new Uint16Array(data.length);
-    for (let tile = 0; tile < data.length; tile += 0x10) {
-      for (let y = 0; y < 8; y++) {
-        const lo = data[tile | y];
-        const hi = data[tile | 8 | y];
-        const lor = reverseBits(lo);
-        const hir = reverseBits(hi);
-        this.patternTableFull[tile | y] = intercalateBits(lo, hi);
-        this.patternTableFull[tile | 8 | y] = intercalateBits(lor, hir);
+    if (data.length) {
+      this.usingChrRam = false;
+      this.patternTableFull = new Uint16Array(data.length);
+      for (let tile = 0; tile < data.length; tile += 0x10) {
+        for (let y = 0; y < 8; y++) {
+          const lo = data[tile | y];
+          const hi = data[tile | 8 | y];
+          const lor = reverseBits(lo);
+          const hir = reverseBits(hi);
+          this.patternTableFull[tile | y] = intercalateBits(lo, hi);
+          this.patternTableFull[tile | 8 | y] = intercalateBits(lor, hir);
+        }
       }
+    } else {
+      this.usingChrRam = true;
     }
   },
 
