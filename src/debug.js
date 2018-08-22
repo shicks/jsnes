@@ -27,17 +27,18 @@ import {Recording} from './recording.js';
 //   next 6 bits are other flags, dependent on the type
 // CPU instruction:
 //   [00000p01] [ opcode ] [ pclow  ] [ pchigh ] [ page?  ]
-//   p = PC is paged, enables 5th and 6th byte
+//   p = PC is paged, enables 5th byte
 //   // ss = number of bytes in instruction (1-3)
 //   opcode = opcode executed
 //   pc = address opcode was read from (little endian)
 //   page = optional page index (if p == 1)
 // Memory:
-//   [00wrsp10] [ addrlo ] [ addrhi ] [ page?  ] [ read?  ] [readhi? ] [ write? ]
-//   p = address was paged, enables page? bytes
+//   [0Pwrsp10] [ addrlo ] [ addrhi ] [ page?  ] [ read?  ] [readhi? ] [ write? ]
+//   p = address was paged, enables page? byte
 //   s = 16-bit read, enables valhi? byte
 //   r = whether this is a read
 //   w = whether this is a write
+//   P = whether this is PPU memory
 //   addr = address read from
 //   page = page index (if p == 1)
 //   read = low 8 bits of read value (r == 1)
@@ -87,7 +88,7 @@ export class Debug {
     this.coverage = new Debug.Coverage(this.nes);
     this.breakIf = () => true,
     this.breakIn = null;
-    this.breakAtVBlank = false;
+    this.breakAtScanline = null;
     this.break = false;
     this.mt = new Debug.MemTracker(this.nes);
     this.origin = new Debug.OriginTracker(this.nes);
@@ -151,7 +152,7 @@ export class Debug {
     }
     // only check for backjumps in PRG.
     let wasHolding = this.holding.holding;
-    if (bank != null && this.holding.check(addr)) {
+    if (bank != null && this.holding.check(addr) && this.breakAtScanline == null) {
       if (!wasHolding) this.buffer[this.pos++] = Debug.ELIDED;
       return;
     }
@@ -222,13 +223,17 @@ export class Debug {
     this.buffer[this.pos++] = op;
 
     if (this.breakpoints) {
-      const mask = bank != null ? BREAK_PRG_R : (op >> 4) & 3;
+      const mask = bank != null ? BREAK_PRG_R :
+            op & MEM_PPU ? (op == Debug.PPU_RD ? BREAK_PPU_R : BREAK_PPU_W) :
+            (op >> 4) & 3; // tricky: may include both read and write
       if ((this.breakpoints[addr] & mask)
+          // NOTE: breakIf is not going to know it's PPU...?
           && this.breakIf(address, op & MEM_READ ? 'r' : 'w', value, this.banked(this.lastPc))) {
         const opMask = op & (MEM_READ | MEM_WRITE);
         const type = opMask == MEM_READ ? 'read' :
             opMask == MEM_WRITE ? 'write' : 'read-write';
-        console.log(`break on ${type} ${bank ? 'PRG' : 'RAM'} $${addr.toString(16)
+        const source = op & MEM_PPU ? 'PPU' : bank ? 'PRG' : 'RAM';
+        console.log(`break on ${type} ${source} $${addr.toString(16)
                      } at ${this.banked(this.lastPc)}`);
         this.break = true;
       } else if ((op & MEM_WORD) && (this.breakpoints[addr + 1] & mask)
@@ -250,9 +255,9 @@ export class Debug {
       this.buffer[this.pos++] = frame >> 8;
       this.buffer[this.pos++] = frame;
       this.buffer[this.pos++] = Debug.VBLANK;
-      if (this.breakAtVBlank) {
+      if (this.breakAtScanline != null) {
         this.break = true;
-        this.breakAtVBlank = false;
+        this.breakAtScanline = null;
       }
     } else if (line > 20) {
       if (this.buffer[this.pos - 1] == Debug.SCANLINE &&
@@ -265,6 +270,11 @@ export class Debug {
       if (this.pos + 3 >= this.buffer.length) this.resetTrace();
       this.buffer[this.pos++] = this.scanline = line - 21;
       this.buffer[this.pos++] = Debug.SCANLINE;
+      if (this.breakAtScanline != null && this.breakAtScanline >= 0 &&
+          this.breakAtScanline <= line - 21) {
+        this.break = true;
+        this.breakAtScanline = null;
+      }
     }
   }
 
@@ -341,7 +351,10 @@ export class Debug {
       const selector = this.buffer[--pos];
       if (!selector) continue;
       const len = selectorLength(selector);
-      if (resets < start.resets || resets == start.resets && pos - len + 1 < start.pos) break;
+      if (resets < start.resets || resets == start.resets && pos - len + 1 < start.pos) {
+        pos -= len - 1;
+        break;
+      }
       entries.push(pos + 1);
       // special case scanline frame so that we can know the start frame upfront
       if (selector == Debug.VBLANK) {
@@ -362,10 +375,14 @@ export class Debug {
       case 1: { // cpu
         const op = this.buffer[--pos];
         const addr = this.buffer[--pos] | (this.buffer[--pos] << 8);
-        const romaddr =
-            selector & PAGED ? this.nes.mmap.prgRomAddress(this.buffer[--pos], addr) : null;
+        let romaddr = null;
+let bank = null;
+        if (selector & PAGED) {
+          bank = this.buffer[--pos];
+          romaddr = this.nes.mmap.prgRomAddress(bank, addr);
+}
 
-if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, 5).map(x=>x.toString(16)), addr, romaddr);
+if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, pos+5).map(x=>x.toString(16)), addr, bank, romaddr);
 
         cpu && cpu(op, addr, romaddr);
         break;
@@ -373,6 +390,7 @@ if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, 5).map(x=>x.toString(16)
       case 2: { // mem
         const addr = this.buffer[--pos] | (this.buffer[--pos] << 8);
         const romaddr =
+            selector & MEM_PPU ? 'ppu' :  // NOTE: this will break with paged CHR RAM.
             selector & PAGED ? this.nes.mmap.prgRomAddress(this.buffer[--pos], addr) : null;
         const read =
             selector & MEM_READ ?
@@ -447,8 +465,9 @@ return;
         parts.push(`\n ${frame}:${scanline}${pc}: ${bytes.join(' ')} ${instr} ${mode}`);
       },
       mem: (addr, romaddr, read, write) => {
-        let a = (romaddr != null ? romaddr : addr).toString(16);
-        a = '$' + a.padStart(4 + (romaddr != null), '0');
+        let a = (typeof romaddr == 'number' ? romaddr : addr).toString(16);
+        a = '$' + a.padStart(4 + (typeof romaddr == 'number'), '0');
+        if (romaddr == 'ppu') a = 'PPU ' + a;
         if (read != null) parts.push(`  read ${a} -> $${read.toString(16)}`);
         if (write != null) parts.push(`  write ${a} <- $${write.toString(16)}`);
       },
@@ -474,9 +493,9 @@ return;
 
   nextInstruction() {
     const addr = this.nes.cpu.REG_PC + 1;
-    const op = this.nes.mmap.load(addr);
+    const op = this.nes.cpu.load(addr);
     return '           $' + addr.toString(16).padStart(5, 0) + ': ' +
-        formatInstruction(this.nes, op, addr, (a) => this.nes.mmap.load(a));
+        formatInstruction(this.nes, op, addr, (a) => this.nes.cpu.load(a));
   }
 
   patchRom(addr, value) {
@@ -525,8 +544,8 @@ class CallStackTracker {
   push(data) {
     // First remove any obsolete elements.
     const sp = this.nes.cpu.REG_SP;
-    const mmap = this.nes.mmap;
-    const pc = mmap.load(sp + 1) | (mmap.load(sp + 2) << 8);
+    const cpu = this.nes.cpu;
+    const pc = cpu.load(sp + 1) | (cpu.load(sp + 2) << 8);
     const stack = this.stack;
     while (stack.length && stack[stack.length - 1].sp <= sp) stack.pop();
     stack.push({sp, pc, data});
@@ -548,8 +567,8 @@ class CallStackTracker {
    */
   pop() {
     const sp = this.nes.cpu.REG_SP;
-    const mmap = this.nes.mmap;
-    const pc = mmap.load(sp + 1) | (mmap.load(sp + 2) << 8);
+    const cpu = this.nes.cpu;
+    const pc = cpu.load(sp + 1) | (cpu.load(sp + 2) << 8);
     const stack = this.stack;
     let top;
     while (stack.length && stack[stack.length - 1].sp <= sp) top = stack.pop();
@@ -782,7 +801,7 @@ Debug.Coverage = class {
       }
       if (valid & 0x07) {
 // if (i == 0x1c26f)console.log('RAM');
-        const value = type == 'x' ? 1 : this.nes.mmap.load(i < 0x2000 ? i & 0x7ff : i);
+        const value = type == 'x' ? 1 : this.nes.cpu.load(i < 0x2000 ? i & 0x7ff : i);
         candidates['RAM $' + i.toString(16).padStart(4, 0)] = value;
       }
     }
@@ -816,18 +835,18 @@ Debug.MemTracker = class {
   }
 
   reset() {
-    const mmap = this.nes.mmap;
+    const cpu = this.nes.cpu;
     for (let i = 0; i < 0x8000; i++) {
-      this.mem[i] = mmap.load(i);
+      this.mem[i] = cpu.load(i);
     }
     this.valid.fill(1);
   }
 
   expectSame() {
-    const mmap = this.nes.mmap;
+    const cpu = this.nes.cpu;
     let candidates = 0;
     for (let i = 0; i < 0x8000; i++) {
-      const mem = mmap.load(i);
+      const mem = cpu.load(i);
       if (this.mem[i] != mem) this.valid[i] = 0;
       this.mem[i] = mem;
       candidates += this.valid[i];
@@ -836,10 +855,10 @@ Debug.MemTracker = class {
   }
 
   expectDiff() {
-    const mmap = this.nes.mmap;
+    const cpu = this.nes.cpu;
     let candidates = 0;
     for (let i = 0; i < 0x8000; i++) {
-      const mem = mmap.load(i);
+      const mem = cpu.load(i);
       if (this.mem[i] == mem) this.valid[i] = 0;
       this.mem[i] = mem;
       candidates += this.valid[i];
@@ -881,7 +900,7 @@ Debug.Watch = class {
     const fmt = (v, p) => `$${v.toString(16).padStart(p, 0)}${
                            ascii&&p==2&&v>31&&v<127?' ('+String.fromCharCode(v)+')':''}`;
     const read = type == 'ram' ?
-          (a) => this.nes.mmap.load(a) :
+          (a) => this.nes.cpu.load(a) :
           (a) => this.nes.rom.rom[a];
     const pad = type = 'ram' ? 4 : 5;
     const pc = () => {
@@ -962,7 +981,7 @@ Debug.WatchOld = class {
     }
     if (!(addr instanceof Array)) addr = [addr, addr];
     for (let i = addr[0]; i <= addr[1]; i++) {
-      this.watching[i] = this.nes.mmap.load(i);
+      this.watching[i] = this.nes.cpu.load(i);
     }
   }
 
@@ -975,7 +994,7 @@ Debug.WatchOld = class {
     if (watching['cleared']) return;
     for (let addr in watching) {
       const old = watching[addr];
-      const curr = this.nes.mmap.load(addr);
+      const curr = this.nes.cpu.load(addr);
       if (curr != old) {
         watching[addr] = curr;
         console.log(`Watch $${Number(addr).toString(16).padStart(4,0)}: ${
@@ -1013,6 +1032,8 @@ const BREAK_RAM_W = 2;
 const BREAK_RAM_X = 4;
 const BREAK_PRG_R = 8;
 const BREAK_PRG_X = 0x10;
+const BREAK_PPU_R = 0x20;
+const BREAK_PPU_W = 0x40;
 
 const BREAKPOINT_MODES = {
   'ram-r': BREAK_RAM_R,
@@ -1020,6 +1041,8 @@ const BREAKPOINT_MODES = {
   'ram-x': BREAK_RAM_X,
   'prg-r': BREAK_PRG_R,
   'prg-x': BREAK_PRG_X,
+  'ppu-r': BREAK_PPU_R,
+  'ppu-w': BREAK_PPU_W,
 };
 
 // To pass as first arg of logMem
@@ -1027,6 +1050,8 @@ Debug.MEM_RD   = 0b00010010;
 Debug.MEM_RD16 = 0b00011010;
 Debug.MEM_WR   = 0b00100010;
 Debug.MEM_RW   = 0b00110010;
+Debug.PPU_RD   = 0b01010010;
+Debug.PPU_WR   = 0b01100010;
 // To pass as first arg or logOther
 Debug.SCANLINE = 0b00000011; // next argument is scanline number, 0..240
 Debug.VBLANK   = 0b00000111; // next two arguments is frame number (LSB first)
@@ -1041,6 +1066,7 @@ const PAGED = 4;
 const MEM_WORD = 8;
 const MEM_READ = 0x10;
 const MEM_WRITE = 0x20;
+const MEM_PPU = 0x40;
 
 // Quick lookup table rather than counting bits?
 const LEN_BY_OP = [];
@@ -1050,3 +1076,5 @@ LEN_BY_OP[Debug.MEM_RD16] = 5;
 LEN_BY_OP[Debug.MEM_RD16 | PAGED] = 6;
 LEN_BY_OP[Debug.MEM_WR] = 4;
 LEN_BY_OP[Debug.MEM_RW] = 5;
+LEN_BY_OP[Debug.PPU_RD] = 4;
+LEN_BY_OP[Debug.PPU_WR] = 4;

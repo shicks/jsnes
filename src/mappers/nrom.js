@@ -113,14 +113,14 @@ export class NROM {
       if (address < 2) {
         if (address) {
           // 2001 PPUMASK (PPU Control Register 2)
-          this.nes.ppu.updateControlReg2(value));
+          this.nes.ppu.updateControlReg2(value);
         } else {
           // 2000 PPUCTRL (PPU Control Register 1)
-          this.nes.ppu.updateControlReg1(value));
+          this.nes.ppu.updateControlReg1(value);
         }
       } else if (address == 3) {
         // 2003 OAMADDR (Sprite RAM address)
-        this.nes.ppu.writeSRAMAddress(value));
+        this.nes.ppu.writeSRAMAddress(value);
       }
     } else {
       if (address < 6) {
@@ -179,9 +179,12 @@ export class NROM {
     this.prgRam = new Uint8Array(0x2000);
   }
 
-  initializePrgRom() {
+  initializePrgRomSwitcher() {
     // May be overwritten to handle paging, etc.
     this.prgRomSwitcher = new utils.RomBankSwitcher(this.nes.rom.rom, 0x8000);
+  }
+
+  initializePrgRom() {
     this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
 
     // this.nes.cpu.prgRom8 = this.nes.rom.page(0, 0x2000);
@@ -199,13 +202,16 @@ export class NROM {
     // this.ppuMap.fill(this.ppuMap[0x2c00], 0x3c00, 0x3f00);
   }
 
-  initializePatternTables() {
+  initializeChrRomSwitcher() {
     if (this.nes.rom.vrom && this.nes.rom.vrom.length) {
       this.nes.ppu.importChrRom(this.nes.rom.vrom);
       this.nes.ppu.usingChrRam = false;
     }
     this.chrRomSwitcher =
         new utils.RomBankSwitcher(this.nes.ppu.patternTableFull, 0x2000);
+  }
+
+  initializePatternTables() {
     this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
   }
 
@@ -243,29 +249,29 @@ export class NROM {
   // different write behaviors depending on where they are.  instead, do a getter
   // indirection where paged roms' getters look up the current bank and return that.
 
-  write(address, value) {
-    const bank = this.cpuBanks[this.cpuWrite[address]];
-    if (!bank) return;
-    const index = address & (bank.length - 1);
-    const oldValue = bank[index];
-    if (oldValue >= 0) { // is it a number, rather than undefined or a function?
-      bank[index] = value;
-    } else if (typeof oldValue == 'function') {
-      oldValue(value, this.nes);
-    }
-    if (address >= 0x6000 && address < 0x8000) {
-      this.nes.battery.store(address);
-    }
-  }
+  // write(address, value) {
+  //   const bank = this.cpuBanks[this.cpuWrite[address]];
+  //   if (!bank) return;
+  //   const index = address & (bank.length - 1);
+  //   const oldValue = bank[index];
+  //   if (oldValue >= 0) { // is it a number, rather than undefined or a function?
+  //     bank[index] = value;
+  //   } else if (typeof oldValue == 'function') {
+  //     oldValue(value, this.nes);
+  //   }
+  //   if (address >= 0x6000 && address < 0x8000) {
+  //     this.nes.battery.store(address);
+  //   }
+  // }
 
-  load(address) {
-    const bank = this.cpuBanks[this.cpuRead[address]];
-    if (!bank) return 0;
-    const index = address & (bank.length - 1);
-    const value = bank[index];
-    if (value >= 0) return value;
-    return typeof value == 'function' ? value(this.nes) : 0;
-  }
+  // load(address) {
+  //   const bank = this.cpuBanks[this.cpuRead[address]];
+  //   if (!bank) return 0;
+  //   const index = address & (bank.length - 1);
+  //   const value = bank[index];
+  //   if (value >= 0) return value;
+  //   return typeof value == 'function' ? value(this.nes) : 0;
+  // }
 
   // loadPpu(address) {
   //   address &= 0x3fff;
@@ -378,7 +384,9 @@ export class NROM {
     }
 
     this.initializePrgRam();
+    this.initializePrgRomSwitcher();
     this.initializePrgRom();
+    this.initializeChrRomSwitcher();
     this.initializePatternTables();
     this.initializeNametables();
 
@@ -395,10 +403,10 @@ export class NROM {
     //nes.getCpu().doResetInterrupt();
     this.nes.cpu.requestIrq(this.nes.cpu.IRQ_RESET);
 
-    // Ensure super.initializeRegisters was called!
-    if (!this.cpuWrite[0x4015]) {
-      throw new Error('Forgot to call super.initializeRegisters?');
-    }
+    // // Ensure super.initializeRegisters was called!
+    // if (!this.cpuWrite[0x4015]) {
+    //   throw new Error('Forgot to call super.initializeRegisters?');
+    // }
   }
 
   // loadPRGROM() {
@@ -546,8 +554,10 @@ export class NROM {
 
     // what size??? 8k? 16k? 32k?
     // just delegate to CPU or muck with CPU internals here?
+    this.prgRomSwitcher.swap(address & 0x7fff, bank, size);
+    this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
 
-    this.nes.cpu.loadPrgPage(address, bank, size);
+    // this.nes.cpu.loadPrgPage(address, bank, size);
   }
 
   // Loads a page of CHR ROM
@@ -591,10 +601,11 @@ export class NROM {
   }
 
   // returns a bank number for the given address, or null if it does not come
-  // from PRG ROM.  Assumes 8k banks.
+  // from PRG ROM.
   prgRomBank(addr) {
-    if (addr >= 0x8000) {
-      return this.prgRomSwitcher.
+    if (addr < 0x8000) return null;
+    const fullAddr = this.prgRomSwitcher.map(addr & 0x7fff);
+    return fullAddr >>> 13;
 
     // TODO - we currently hard-code 8k pages, but this is not necessarily
     // the case; it should be overridden by the particular mapper, or else
@@ -617,7 +628,7 @@ export class NROM {
       joy2StrobeState: this.joy2StrobeState,
       joypadLastWrite: this.joypadLastWrite,
       prgRam: Array.from(this.prgRam),
-      prg: this.serializeBanks(this.cpuBanks),
+      prg: this.prgRomSwitcher.snapshot(), //this.serializeBanks(this.cpuBanks),
     };
   }
 
@@ -626,7 +637,7 @@ export class NROM {
     this.joy2StrobeState = s.joy2StrobeState;
     this.joypadLastWrite = s.joypadLastWrite;
     this.prgRam = Uint8Array.from(s.prgRam);
-    this.deserializeBanks(this.cpuBanks, s.prg);
+    this.prgRomSwitcher.restore(s.prg);
   }
 
   serializeBanks(banks) {
@@ -659,24 +670,24 @@ export class NROM {
   }
 }
 
-// Look up tables for intercalated zeros in a number
-// abcdefgh -> 0a0b0c0d0e0f0g0h or a0b0c0d0e0f0g0h0
-const [INTERCALATE_LOW, INTERCALATE_HIGH] = (() => {
-  const lo = new Uint16Array(256);
-  const hi = new Uint16Array(256);
-  for (let i = 0; i < 256; i++) {
-    let value = 0;
-    let shift = 0;
-    let x = i;
-    while (x) {
-      if (x & 1) {
-        value |= (1 << shift);
-      }
-      x >>>= 1;
-      shift += 2;
-    }
-    lo[i] = value;
-    hi[i] = value << 1;
-  }
-  return [lo, hi];
-})();
+// // Look up tables for intercalated zeros in a number
+// // abcdefgh -> 0a0b0c0d0e0f0g0h or a0b0c0d0e0f0g0h0
+// const [INTERCALATE_LOW, INTERCALATE_HIGH] = (() => {
+//   const lo = new Uint16Array(256);
+//   const hi = new Uint16Array(256);
+//   for (let i = 0; i < 256; i++) {
+//     let value = 0;
+//     let shift = 0;
+//     let x = i;
+//     while (x) {
+//       if (x & 1) {
+//         value |= (1 << shift);
+//       }
+//       x >>>= 1;
+//       shift += 2;
+//     }
+//     lo[i] = value;
+//     hi[i] = value << 1;
+//   }
+//   return [lo, hi];
+// })();

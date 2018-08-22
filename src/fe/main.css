@@ -128,6 +128,25 @@
   background-color: #ccc;
 }
 
+.nametable-text {
+  font-size: 50%;
+  white-space: pre;
+  font-family: monospace;
+  /* width: 576px; */
+  /* height: 360px; */
+}
+
+.nametable-text > div > div { border: 1px solid white; }
+
+.nametable-text .table-bottom { border-bottom: 1px solid #aaa; }
+.nametable-text .table-right { border-right: 1px solid #aaa; }
+
+.nametable-text .top { border-top: 1px solid black; }
+.nametable-text .bottom { border-bottom: 1px solid black; }
+.nametable-text .left { border-left: 1px solid black; }
+.nametable-text .right { border-right: 1px solid black; }
+.nametable-text .scan { background-color: #ffc; }
+
 .trace {
   font-size: 83%;
   white-space: pre;
@@ -149,7 +168,7 @@
   color: #888;
 }
 
-.nametable {
+.nametable { /* was this supposed to be pattern-table? */
   width: 288px;
   height: 180px; /* 143 */
 }

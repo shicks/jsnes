@@ -82,17 +82,23 @@ export class BiMap extends Map {
 export class RomBankSwitcher {
   constructor(data, windowSize, cacheSize = 128) {
     /** @const {!TypedArray} The full data. */
-    this.data = data;
+    this.data = data || new Uint16Array(windowSize); // type???
     /** @const {number} The total amount that can be addressed at once. */
-    this.windowSize = powerOfTwo(windowSize);
+    this.windowBits = log2(windowSize);
     /** @const {number} Max size of the LRU cache. */
     this.cacheSize = cacheSize;
     /** @type {number} The log of the current size of each page - may decrease. */
-    this.pageSize = this.windowSize;
+    this.pageBits = this.windowBits;
     /** @type {!Map<string, !TypedArray>} */
     this.cache = new Map();
     /** @type {!Array<number>} */
     this.current = [0];
+
+    // Mirror as necessary if there's less total data than a single window.
+    while (this.data.length * this.current.length < windowSize) {
+      this.current = this.current.concat(this.current);
+      this.pageBits--;
+    }
   }
 
   buffer() {
@@ -111,11 +117,11 @@ export class RomBankSwitcher {
       this.cache.delete(this.cache.keys().next());
     }
     // Construct a new entry.
-    entry = new this.data.constructor(this.windowSize);
-    const logPage = log2(this.pageSize);
+    entry = new this.data.constructor(1 << this.windowBits);
     for (let i = 0; i < this.current.length; i++) {
-      const page = this.current[i] << logPage;
-      entry.set(this.data.subarray(page, page + this.pageSize), i << logPage);
+      const page = this.current[i] << this.pageBits;
+      entry.set(this.data.subarray(page, page + (1 << this.pageBits)),
+                i << this.pageBits);
     }
     this.cache.set(key, entry);
     return entry;
@@ -123,18 +129,24 @@ export class RomBankSwitcher {
 
   swap(address, bank, size) {
     // Shrink pageSize to fit.
-    size = powerOfTwo(size);
-    bank = (bank >>> 0) & (powerOfTwo(this.data.length / size) - 1);
-    if (size < this.pageSize) this.divide(size);
-    address /= this.pageSize;
-    size /= this.pageSize;
+    const bits = log2(size);
+    //size = powerOfTwo(size);
+    bank = (bank >>> 0) & (powerOfTwo(this.data.length >>> bits) - 1);
+    if (bits < this.pageBits) this.divide(bits);
+    address >>>= this.pageBits;
+    size >>>= this.pageBits;
     bank *= size;
     const end = address + size;
     while (address < end) this.current[address++] = bank++;
   }
 
+  map(address) {
+    return this.current[address >>> this.pageBits] << this.pageBits |
+           (address & ((1 << this.pageBits) - 1));
+  }
+
   restore(banks) {
-    const size = this.windowSize / banks.length;
+    const size = (1 << this.windowBits) / banks.length;
     let addr = 0;
     for (const bank of banks) {
       this.swap(addr, bank, size);
@@ -146,12 +158,12 @@ export class RomBankSwitcher {
     return this.current.slice();
   }
 
-  divide(size) {
-    const newPageSize = powerOfTwo(size);
-    const factor = (1 << this.pageSize) / newPageSize;
+  divide(bits) {
+    const factor = 1 << (this.pageBits - bits)
     this.current = divideBanks(this.current, factor);
-    const divideKey = (k) => divide(k.split(',').map(Number), factor).join(',');
+    const divideKey = (k) => divideBanks(k.split(',').map(Number), factor).join(',');
     this.cache = new Map([...this.cache].map(([k, v]) => [divideKey(k), v]));
+    this.pageBits = bits;
   }
 }
 

@@ -215,8 +215,7 @@ export class PatternTableViewer extends Component {
     }
 
     this.palette = null;
-    this.palIndex = [-1, -1];
-    this.vram = this.nes.ppu.vramMem;
+    this.palIndex = -1;
     this.canvas.addEventListener('click', (e) => this.click(e));
   }
 
@@ -225,49 +224,46 @@ export class PatternTableViewer extends Component {
     let x = e.offsetX;
     const table = x < 146 ? 0 : 1;
     if (table) x -= 145;
-    const index = Math.floor(x / 33);
-    if (this.palIndex[table] == index) {
-      this.palIndex[table] = -1;
+    const index = Math.floor(x / 33) + table * 4;
+    if (this.palIndex == index) {
+      this.palIndex = -1;
     } else {
-      this.palIndex[table] = index;
+      this.palIndex = index;
     }
     this.frame();
   }
 
   getTile(table, row, col, tileRow, colors) {
     const addr = (table << 12) | (row << 8) | (col << 4) | tileRow;
-    this.getTileInternal(this.vram, addr, colors);
+    this.getTileInternal(this.nes.ppu.patternTable, addr, colors);
   }
 
   getTileInternal(ram, addr, colors) {
-    let upper = ram[addr | 8];
-    let lower = ram[addr];
+    let line = ram[addr];
     for (let bit = 7; bit >= 0; bit--) {
-      colors[bit] = this.palette[((upper & 1) << 1) | (lower & 1)];
-      upper >>>= 1;
-      lower >>>= 1;
+      colors[bit] = this.palette[line & 3];
+      line >>>= 2;
     }
   }
 
   frame() {
     // Update the image data.
     const tile = [0, 0, 0, 0, 0, 0, 0, 0];
+    const p = this.nes.ppu.palette();
+    // Select the palette
+    if (this.palIndex < 0) {
+      this.palette = [
+        0x000000,
+        0xffffff,
+        0xaaaaaa,
+        0x555555,
+      ];
+    } else {
+      this.palette = p.slice(4 * this.palIndex).slice(0, 4);
+    }
+    this.palette = this.palette.map(x => (x | 0xff000000) >>> 0);
+
     for (let table = 0; table < 2; table++) {
-
-      // Select the palette
-      const p = table ? this.nes.ppu.imgPalette : this.nes.ppu.sprPalette;
-      if (this.palIndex[table] < 0) {
-        this.palette = [
-          0x000000,
-          0xffffff,
-          0xaaaaaa,
-          0x555555,
-        ];
-      } else {
-        this.palette = p.slice(4 * this.palIndex[table]).slice(0, 4);
-      }
-      this.palette = this.palette.map(x => (x | 0xff000000) >>> 0);
-
       const x0 = table ? 145 : 0;
       for (let row = 0; row < 16; row++) {
         const y1 = row * 9;
@@ -292,7 +288,7 @@ export class PatternTableViewer extends Component {
         for (let row = 0; row < 2; row++) {
           const y1 = y0 + row * 16;
           for (let col = 0; col < 2; col++) {
-            const i = pal * 4 + row * 2 + col;
+            const i = table * 16 + pal * 4 + row * 2 + col;
             const c =
                 ((p[i] & 0xff) << 16) |
                 (p[i] & 0xff00) |
@@ -301,7 +297,7 @@ export class PatternTableViewer extends Component {
             this.context.fillRect(x1 + col * 16, y1, 16, 16);
           }
         }
-        if (pal == this.palIndex[table]) {
+        if (4 * table + pal == this.palIndex) {
           this.context.strokeStyle = '#ff0000';
           this.context.strokeRect(x1 + 1, y0 + 1, 30, 30);
         }
@@ -332,7 +328,9 @@ export class ChrRomViewer extends PatternTableViewer {
     const bank = this.pages[bankIndex];
     const bankNum = bank >>> 2;
     const addr = (bank % 4) << 10 | ((row & 3) << 8) | (col << 4) | tileRow;
-    this.getTileInternal(this.nes.rom.vrom[bankNum], addr, data);
+    this.getTileInternal(
+        this.nes.ppu.patternTableFull.subArray(bankNum, bankNum + 0x400),
+        addr, data);
   }
 }
 
@@ -401,5 +399,78 @@ export class RecordingPane extends Component {
     } else {
       this.position.textContent = `${this.recording.index} bytes`;
     }      
+  }
+}
+
+export class NametableTextViewer extends WatchGroup {
+  constructor(nes) {
+    super();
+    this.nes = nes;
+    this.element.classList.add('nametable-text');
+    const head = child(this.element, 'div');
+    text(head, '   ' + new Array(64).fill(0)
+         .map((_, i) => i.toString(16).padStart(2, 0)).join(' '));
+    for (let y = 0; y < 64; y++) {
+      if ((y & 0x1e) == 0x1e) continue;
+      const row = child(this.element, 'div');
+      text(row, `${y.toString(16).padStart(2, 0)}`);
+      for (let x = 0; x < 64; x++) {
+        const watch = new NametableWatch(nes, (y >>> 4 & 2) | (x >>> 5), y & 0x1f, x & 0x1f);
+        row.appendChild(watch.element);
+        if (x == 31) watch.element.classList.add('table-right');
+        // TODO - consider adding a click handler to display the 8x8 tile in the top left?
+        //      - with attributes?
+        // watch.element.addEventListener(
+        //     'click', () => watch.element.classList.toggle('highlight'));
+        this.watches.push(watch);
+      }
+      if (y == 29) row.classList.add('table-bottom');
+    }
+  }
+
+  update(...args) {
+    super.update(...args);
+    // also update the scanline
+    const scan = this.nes.ppu.scanline;
+    const rows = [...this.element.children].slice(1);
+    for (let i = 0; i < rows.length; i++) {
+      rows[i].classList.remove('scan');
+      if (scan > 20 && scan < 261 &&
+          i == (this.nes.ppu.cntV ? 30 : 0) + this.nes.ppu.cntVT) {
+        rows[i].classList.add('scan');
+      }
+    }
+  }
+
+  formatValue(v) {
+    return ' ' + v.toString(16).padStart(2, 0);
+  }
+}
+
+class NametableWatch extends Watch {
+  constructor(nes, table, y, x) {
+    super(() => nes.ppu.nametables[table][y << 5 | x]);   
+    this.nes = nes;
+    this.table = table;
+    this.y = y;
+    this.x = x;
+  }
+
+  update(...args) {
+    super.update(...args);
+    // handle classes for scroll
+    this.element.classList.remove('top', 'bottom', 'left', 'right');
+    // look for left/right border - ignore fine scroll for now
+    const sameH = !(this.table & 1) == !this.nes.ppu.regH;
+    const sameV = !(this.table & 2) == !this.nes.ppu.regV;
+    // TODO - if fine scroll is 0 then don't add the extra line.
+    if (this.x == this.nes.ppu.regHT &&
+        (sameV ? this.y >= this.nes.ppu.regVT : this.y <= this.nes.ppu.regVT)) {
+      this.element.classList.add(sameH ? 'left' : 'right');
+    }
+    if (this.y == this.nes.ppu.regVT &&
+        (sameH ? this.x >= this.nes.ppu.regHT : this.x <= this.nes.ppu.regHT)) {
+      this.element.classList.add(sameV ? 'top' : 'bottom');      
+    }
   }
 }

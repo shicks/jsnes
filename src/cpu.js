@@ -6,10 +6,7 @@ export function CPU(nes) {
 
   // Keep Chrome happy
   this.ram = null;
-  this.prgRom8 = null;
-  this.prgRomA = null;
-  this.prgRomC = null;
-  this.prgRomE = null;
+  this.prgRom = null;
   this.REG_ACC = null;
   this.REG_X = null;
   this.REG_Y = null;
@@ -1097,7 +1094,8 @@ CPU.prototype = {
         // * ??? *
         // *******
 
-        this.nes.stop();
+        if (!this.nes.debug) this.nes.debug = new Debug(this.nes);
+        this.nes.debug.break = true;
         this.nes.crashMessage =
           "Game crashed, invalid opcode at address $" + opaddr.toString(16);
         break;
@@ -1112,11 +1110,7 @@ CPU.prototype = {
     if (addr < 0x8000) {
       result = addr < 0x2000 ? this.ram[addr & 0x7ff] : this.nes.mmap.load(addr);
     } else {
-      if (addr < 0xc000) {
-        result = addr < 0xa000 ? this.prgRom8[addr & 0x1fff] : this.prgRomA[addr & 0x1fff];
-      } else {
-        result = addr < 0xe000 ? this.prgRomC[addr & 0x1fff] : this.prgRomE[addr & 0x1fff];
-      }
+      result = this.prgRom[addr & 0x7fff];
     }
     if (opt_log && this.nes.debug) this.nes.debug.logMem(Debug.MEM_RD, addr, result);
     return result;

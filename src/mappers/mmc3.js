@@ -25,89 +25,81 @@ export class MMC3 extends NROM {
   }
 
   initializePrgRom() {
-    
-
-
-    this.addRomBank(0x8000, 0xa000, this.nes.rom.prgPage(0, 0x2000));
-    this.addRomBank(0xa000, 0xc000, this.nes.rom.prgPage(1, 0x2000));
-    this.addRomBank(0xc000, 0xe000, this.nes.rom.prgPage(-2, 0x2000));
-    this.addRomBank(0xe000, 0x10000, this.nes.rom.prgPage(-1, 0x2000));
+    this.loadPrgPage(0xc000, -1, 0x4000);
+    // this.addRomBank(0x8000, 0xa000, this.nes.rom.prgPage(0, 0x2000));
+    // this.addRomBank(0xa000, 0xc000, this.nes.rom.prgPage(1, 0x2000));
+    // this.addRomBank(0xc000, 0xe000, this.nes.rom.prgPage(-2, 0x2000));
+    // this.addRomBank(0xe000, 0x10000, this.nes.rom.prgPage(-1, 0x2000));
   }
 
-  initializePatternTableBanks() {
-    for (let i = 0; i < 0x2000; i += 0x400) {
-      this.addVramBank(i, i + 0x400);
-    }
-  }
+  // initializePatternTableBanks() {
+  //   // for (let i = 0; i < 0x2000; i += 0x400) {
+  //   //   this.addVramBank(i, i + 0x400);
+  //   // }
+  // }
 
-  initializePatternTables() {
-    const vromCount = this.nes.rom.vromCount(0x400);
-    if (vromCount > 0) {
-      for (let i = 0; i < 8; i++) {
-        this.loadChrPage(i << 12, i % vromCount, 0x0400);
-      }
-    }
-  }
+  // initializePatternTables() {
+  //   const vromCount = this.nes.rom.vromCount(0x400);
+  //   if (vromCount > 0) {
+  //     for (let i = 0; i < 8; i++) {
+  //       this.loadChrPage(i << 12, i % vromCount, 0x0400);
+  //     }
+  //   }
+  // }
 
-  initializeRegisters() {
-    super.initializeRegisters();
-    this.addRegisterBank('w', 0x8000, 0xa000, 2);
-    this.addRegisterBank('w', 0xa000, 0xc000, 2);
-    this.addRegisterBank('w', 0xc000, 0xe000, 2);
-    this.addRegisterBank('w', 0xe000, 0x10000, 2);
+  write8(addr, value) {
+    addr &= 0xe001;
 
-    this.onWrite(0x8000, (value) => {
-      // Command/Address Select register
-      this.command = value & 7;
-      var tmp = (value >> 6) & 1;
-      if (tmp !== this.prgAddressSelect) {
-        this.prgAddressChanged = true;
-      }
-      this.prgAddressSelect = tmp;
-      this.chrAddressSelect = (value >> 7) & 1;
-    });
-
-    this.onWrite(0x8001, (value) => {
-      // Page number for command
-      this.executeCommand(this.command, value);
-    });
-
-    this.onWrite(0xa000, (value) => {
-      // Mirroring select
-      if ((value & 1) !== 0) {
-        this.nes.ppu.setMirroring(this.nes.rom.HORIZONTAL_MIRRORING);
+    if (addr < 0xc000) {
+      if (addr < 0xa000) {
+        if (addr == 0x8000) {
+          // 8000: Command/Address Select register
+          this.command = value & 7;
+          const tmp = (value >> 6) & 1;
+          if (tmp !== this.prgAddressSelect) {
+            this.prgAddressChanged = true;
+          }
+          this.prgAddressSelect = tmp;
+          this.chrAddressSelect = (value >> 7) & 1;
+        } else {
+          // 8001: Page number for command
+          this.executeCommand(this.command, value);
+        }
       } else {
-        this.nes.ppu.setMirroring(this.nes.rom.VERTICAL_MIRRORING);
+        if (addr == 0xa000) {
+          // A000: Mirroring select
+          if ((value & 1) !== 0) {
+            this.nes.ppu.setMirroring(this.nes.rom.HORIZONTAL_MIRRORING);
+          } else {
+            this.nes.ppu.setMirroring(this.nes.rom.VERTICAL_MIRRORING);
+          }
+        } else {
+          // A001: SaveRAM Toggle
+          // TODO
+          //nes.getRom().setSaveState((value&1)!=0);
+        }
       }
-    });
-
-    this.onWrite(0xa001, (value) => {
-      // SaveRAM Toggle
-      // TODO
-      //nes.getRom().setSaveState((value&1)!=0);
-    });
-
-    this.onWrite(0xc000, (value) => {
-      // IRQ Counter register
-      this.irqCounter = value;
-      //nes.ppu.mapperIrqCounter = 0;
-    });
-
-    this.onWrite(0xc001, (value) => {
-      // IRQ Latch register
-      this.irqLatchValue = value;
-    });
-
-    this.onWrite(0xe000, (value) => {
-      // IRQ Control Reg 0 (disable)
-      //irqCounter = irqLatchValue;
-      this.irqEnable = 0;
-    });
-
-    this.onWrite(0xe001, (value) => {
-      // IRQ Control Reg 1 (enable)
-      this.irqEnable = 1;
-    });
+    } else {
+      if (addr < 0xe000) {
+        if (addr == 0xc000) {
+          // C000: IRQ Counter register
+          this.irqCounter = value;
+          //nes.ppu.mapperIrqCounter = 0;
+        } else {
+          // C001: IRQ Latch register
+          this.irqLatchValue = value;
+        }
+      } else {
+        if (addr == 0xe000) {
+          // E000: IRQ Control Reg 0 (disable)
+          //irqCounter = irqLatchValue;
+          this.irqEnable = 0;
+        } else {
+          // E001: IRQ Control Reg 1 (enable)
+          this.irqEnable = 1;
+        }
+      }
+    }
   }
 
   executeCommand(cmd, arg) {
@@ -207,11 +199,13 @@ export class MMC3 extends NROM {
   }
 
   clockIrqCounter() {
+    // console.log(`clockIrqCounter: enabled: ${this.irqEnable}, counter: ${this.irqCounter}`);
     if (this.irqEnable === 1) {
       this.irqCounter--;
       if (this.irqCounter < 0) {
         // Trigger IRQ:
         //nes.getCpu().doIrq();
+        //console.log(`  => requesting IRQ`);
         this.nes.cpu.requestIrq(this.nes.cpu.IRQ_NORMAL);
         this.irqCounter = this.irqLatchValue;
       }

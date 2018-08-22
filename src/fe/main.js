@@ -5,7 +5,7 @@ import {Speakers} from './speakers.js';
 import {GamepadController} from './gamepadcontroller.js';
 import {KeyboardController} from './keyboardcontroller.js';
 import {FrameTimer} from './frametimer.js';
-import {ChrRomViewer, PatternTableViewer, Trace, WatchPanel, WatchPage, RecordingPane} from './debugger.js';
+import {ChrRomViewer, PatternTableViewer, Trace, WatchPanel, WatchPage, RecordingPane, NametableTextViewer} from './debugger.js';
 import {Component} from './component.js';
 import {FileSystem} from './fs.js';
 import {Menu} from './menu.js';
@@ -58,7 +58,10 @@ class Main {
       onFrame: this.screen.setBuffer.bind(this.screen),
       onStatusUpdate: console.log,
       onAudioSample: this.speakers.writeSample.bind(this.speakers),
-      onBreak: () => this.stop(),
+      onBreak: (midFrame) => {
+        this.stop();
+        if (midFrame && this.nes.ppu.scanline > 0) this.partialRender();
+      },
     });
 
     this.frameTimer = new FrameTimer({
@@ -177,13 +180,26 @@ class Main {
   }
 
   advanceFrame() {
-    this.nes.debug.breakAtVBlank = true;
+    this.nes.debug.breakAtScanline = -1;
+    this.start();
+  }
+  
+  advanceTileRow() {
+    this.nes.debug.breakAtScanline =
+        this.nes.ppu.scanline < 20 || this.nes.ppu.scanline > 260 ?
+            0 : this.nes.ppu.scanline - 13;
     this.start();
   }
 
   advance(instructions = 100) {
     this.nes.debug.breakIn = instructions;
     this.start();
+  }
+
+  partialRender() {
+    this.nes.ppu.triggerRendering();
+    this.screen.setBufferPartial(this.nes.ppu.buffer, this.nes.ppu.scanline - 21);
+    this.screen.writeBuffer();
   }
 
   // layout() {
@@ -251,6 +267,7 @@ new Menu('Debug')
     .addItem('Watch Page', () => promptForNumbers('Pages', pages => {
       for (const page of pages) new WatchPage(main.nes, page);
     }))
+    .addItem('Nametable', () => new NametableTextViewer(main.nes))
     .addItem('Pattern Table', () => new PatternTableViewer(main.nes))
     .addItem('CHR Viewer', () => promptForNumbers('Banks', banks => {
       new ChrRomViewer(main.nes, banks);

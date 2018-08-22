@@ -94,7 +94,7 @@ export class NES {
       if (this.debug.break) {
         this.debug.break = false;
         this.breakpointCycles = cycles;
-        this.opts.onBreak();
+        this.opts.onBreak(true);
         return;
       }
       if (cpu.cyclesToHalt === 0) {
@@ -146,6 +146,11 @@ export class NES {
           this.debug.logScanline(ppu.scanline, this.frameCount);
         }
       }
+    }
+    if (this.debug.break) {
+      this.debug.break = false;
+      this.breakpointCycles = cycles;
+      this.opts.onBreak(false);
     }
     this.fpsFrameCount++;
     this.frameCount++;
