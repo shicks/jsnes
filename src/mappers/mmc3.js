@@ -26,26 +26,7 @@ export class MMC3 extends NROM {
 
   initializePrgRom() {
     this.loadPrgPage(0xc000, -1, 0x4000);
-    // this.addRomBank(0x8000, 0xa000, this.nes.rom.prgPage(0, 0x2000));
-    // this.addRomBank(0xa000, 0xc000, this.nes.rom.prgPage(1, 0x2000));
-    // this.addRomBank(0xc000, 0xe000, this.nes.rom.prgPage(-2, 0x2000));
-    // this.addRomBank(0xe000, 0x10000, this.nes.rom.prgPage(-1, 0x2000));
   }
-
-  // initializePatternTableBanks() {
-  //   // for (let i = 0; i < 0x2000; i += 0x400) {
-  //   //   this.addVramBank(i, i + 0x400);
-  //   // }
-  // }
-
-  // initializePatternTables() {
-  //   const vromCount = this.nes.rom.vromCount(0x400);
-  //   if (vromCount > 0) {
-  //     for (let i = 0; i < 8; i++) {
-  //       this.loadChrPage(i << 12, i % vromCount, 0x0400);
-  //     }
-  //   }
-  // }
 
   write8(addr, value) {
     addr &= 0xe001;
