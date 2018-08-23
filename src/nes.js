@@ -247,11 +247,28 @@ export class NES {
     this.ppu.fromJSON(s.ppu);
   }
 
-  saveSnapshot() {
-    const w = new BinaryWriter();
-    w.writeStringFixed('NES-STA\x1a');
-    // don't actually store the ROM, though we'll get it somewhat
-    // with the memory.  We should consider cleaning up how memory
-    // mapping is done.
+  // SAVESTATE FORMAT
+  // ----------------
+  // Header: "NES-STA\x1a"
+  // Data:   a table containing {cpu, ppu, mmap} state.
+  writeSavestate() {
+    return new BinaryWriter()
+        .writeStringFixed('NES-STA\x1a')
+        .writeTable({
+          'cpu': this.cpu.writeSavestate(),
+          'ppu': this.ppu.writeSavestate(),
+          'mmap': this.mmap.writeSavestate(),
+        })
+        .toArrayBuffer();
+  }
+
+  restoreSavestate(buffer) {
+    new BinaryReader(buffer)
+        .expectString('NES-STA\x1a', 'Not a valid savestate')
+        .readTable({
+          'cpu': (value) => this.cpu.restoreSavestate(value),
+          'ppu': (value) => this.cpu.restoreSavestate(value),
+          'mmap': (value) => this.mmap.restoreSavestate(value),
+        });
   }
 }

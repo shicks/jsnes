@@ -1,4 +1,5 @@
 import {Recording} from './recording.js';
+import {opdata, opmeta} from './opdata.js';
 
 // TODO - more pluggable debug framework
 //  - provide a few hooks via properties on nes:
@@ -435,8 +436,7 @@ if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, pos+5).map(x=>x.toString
     const result = this.visitLog({
       cpu: (op, addr, romaddr) => {
         // TODO - rewrite this to call formatInstruction
-        const opmeta = this.nes.cpu.opmeta;
-        const opinf = opmeta.opdata[op];
+        const opinf = opdata[op];
         const instr = opmeta.instname[opinf & 0xff];
         let pc = (romaddr != null ? romaddr : addr).toString(16);
         pc = ('$' + pc.padStart(4 + (romaddr != null), '0')).padStart(9);
@@ -495,7 +495,7 @@ return;
     const addr = this.nes.cpu.REG_PC + 1;
     const op = this.nes.cpu.load(addr);
     return '           $' + addr.toString(16).padStart(5, 0) + ': ' +
-        formatInstruction(this.nes, op, addr, (a) => this.nes.cpu.load(a));
+        formatInstruction(op, addr, (a) => this.nes.cpu.load(a));
   }
 
   patchRom(addr, value) {
@@ -934,7 +934,7 @@ Debug.Watch = class {
         w[mode] = () => {
           console.log(
               `${scanline()}: Execute ${fmt(i, pad)}: ${
-               formatInstruction(this.nes, read(i), i, read)}`);
+               formatInstruction(read(i), i, read)}`);
         };
       }
     }
@@ -945,9 +945,8 @@ Debug.Watch = class {
   }
 }
 
-const formatInstruction = (nes, op, addr, read) => {
-  const opmeta = nes.cpu.opmeta;
-  const opinf = opmeta.opdata[op];
+const formatInstruction = (op, addr, read) => {
+  const opinf = opdata[op];
   const instr = opmeta.instname[opinf & 0xff];
   let bytes = [op];
   let arg = 0;
