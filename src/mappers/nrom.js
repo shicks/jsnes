@@ -96,9 +96,9 @@ export class NROM {
       if (address < 2) {
         return address ?
             // 2001 PPUMASK (PPU Control Register 2)
-            this.nes.ppu.reg2 :
+            this.nes.ppu.readPpuMask() :
             // 2000 PPUCTRL (PPU Control Register 1)
-            this.nes.ppu.reg1;
+            this.nes.ppu.readPpuCtrl();
       } else if (address == 2) {
         // 2002 PPUSTATUS (PPU Status Register)
         return this.nes.ppu.readStatusRegister();
@@ -122,10 +122,10 @@ export class NROM {
       if (address < 2) {
         if (address) {
           // 2001 PPUMASK (PPU Control Register 2)
-          this.nes.ppu.updateControlReg2(value);
+          this.nes.ppu.writePpuMask(value);
         } else {
           // 2000 PPUCTRL (PPU Control Register 1)
-          this.nes.ppu.updateControlReg1(value);
+          this.nes.ppu.writePpuCtrl(value);
         }
       } else if (address == 3) {
         // 2003 OAMADDR (Sprite RAM address)
@@ -201,8 +201,8 @@ export class NROM {
   }
 
   initializeChrRomSwitcher() {
-    this.nes.ppu.importChrRom(this.nes.rom.vrom);
-    if (!this.nes.ppu.usingChrRam) {
+    if (this.nes.rom.vrom.length) {
+      this.nes.ppu.importChrRom(this.nes.rom.vrom);
       this.chrRomSwitcher =
           new utils.RomBankSwitcher(this.nes.ppu.patternTableFull, 0x2000);
     } else {

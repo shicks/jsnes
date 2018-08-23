@@ -26,9 +26,6 @@ export function PPU(nes) {
   // bits in the tiles.  Then for writes we look up the effect,
   // mask out the opposite lo/hi bits, and then update the others.
 
-  // Whether CHR data is ROM or RAM.
-  this.usingChrRam = null;
-
   // All titles from all CHR pages, or else all tiles from CHR RAM.
   // Each tile occupies 8 (32-bit) elements.  Each element is the
   // rendered tile, two bits per pixel.  The low two bytes are the
@@ -78,7 +75,6 @@ export function PPU(nes) {
   this.sramAddress = null;
   this.currentMirroring = null;
   this.requestEndFrame = null;
-  this.nmiOk = null;
   this.dummyCycleToggle = null;
   this.nmiCounter = null;
   this.scanlineAlreadyRendered = null;
@@ -87,7 +83,6 @@ export function PPU(nes) {
   this.f_bgPatternTable = null;
   this.f_spPatternTable = null;
   this.f_addrInc = null;
-  this.f_nTblAddress = null;
   this.f_color = null;
   this.f_spVisibility = null;
   this.f_bgVisibility = null;
@@ -101,9 +96,6 @@ export function PPU(nes) {
   this.cntVT = null;
   this.cntHT = null;
 
-  this.reg1 = null;
-  this.reg2 = null;
-
   this.regFV = null;
   this.regV = null;
   this.regH = null;
@@ -111,7 +103,6 @@ export function PPU(nes) {
   this.regHT = null;
   this.regFH = null;
 
-  this.attrib = null;
   this.buffer = null;
   this.bgbuffer = null;
   this.pixrendered = null;
@@ -145,7 +136,6 @@ PPU.prototype = {
   reset: function() {
     // PPU Memory:
     this.patternTable = new Uint16Array(0x2000);
-    this.usingChrRam = false;
     this.nametable0 = new Uint8Array(0x400).fill(0xff);
     this.nametable1 = new Uint8Array(0x400).fill(0xff);
     this.nametable2 = new Uint8Array(0x400).fill(0xff);
@@ -165,7 +155,6 @@ PPU.prototype = {
 
     this.currentMirroring = -1;
     this.requestEndFrame = false;
-    this.nmiOk = false;
     this.dummyCycleToggle = false;
     this.nmiCounter = 0;
     this.scanlineAlreadyRendered = null;
@@ -176,7 +165,6 @@ PPU.prototype = {
     this.f_bgPatternTable = 0; // Background Pattern Table address. 0x0000 or 0x1000
     this.f_spPatternTable = 0; // Sprite Pattern Table address. 0x0000 or 0x1000
     this.f_addrInc = 0; // PPU Address Increment. 0=1,1=32
-    this.f_nTblAddress = 0; // Name Table Address. 0=0x2000,1=0x2400,2=0x2800,3=0x2C00
 
     // Control Flags Register 2:
     this.f_color = 0; // Color mode (emph bits 1=red, 2=green, 4=blue; 8=greyscale)
@@ -226,26 +214,21 @@ PPU.prototype = {
     // Name table data:
     this.currentMirroring = -1;
 
-    this.updateControlReg1(0);
-    this.updateControlReg2(0);
+    this.writePpuCtrl(0);
+    this.writePpuMask(0);
   },
 
   importChrRom: function(data) {
-    if (data.length) {
-      this.usingChrRam = false;
-      this.patternTableFull = new Uint16Array(data.length);
-      for (let tile = 0; tile < data.length; tile += 0x10) {
-        for (let y = 0; y < 8; y++) {
-          const lo = data[tile | y];
-          const hi = data[tile | 8 | y];
-          const lor = reverseBits(lo);
-          const hir = reverseBits(hi);
-          this.patternTableFull[tile | y] = intercalateBits(lo, hi);
-          this.patternTableFull[tile | 8 | y] = intercalateBits(lor, hir);
-        }
+    this.patternTableFull = new Uint16Array(data.length);
+    for (let tile = 0; tile < data.length; tile += 0x10) {
+      for (let y = 0; y < 8; y++) {
+        const lo = data[tile | y];
+        const hi = data[tile | 8 | y];
+        const lor = reverseBits(lo);
+        const hir = reverseBits(hi);
+        this.patternTableFull[tile | y] = intercalateBits(lo, hi);
+        this.patternTableFull[tile | 8 | y] = intercalateBits(lor, hir);
       }
-    } else {
-      this.usingChrRam = true;
     }
   },
 
@@ -257,24 +240,6 @@ PPU.prototype = {
 
     this.currentMirroring = mirroring;
     this.triggerRendering();
-
-    // // Remove mirroring:
-    // if (this.vramMirrorTable === null) {
-    //   this.vramMirrorTable = new Array(0x8000);
-    // }
-    // for (var i = 0; i < 0x8000; i++) {
-    //   this.vramMirrorTable[i] = i;
-    // }
-
-    // // Palette mirroring:
-    // this.defineMirrorRegion(0x3f20, 0x3f00, 0x20);
-    // this.defineMirrorRegion(0x3f40, 0x3f00, 0x20);
-    // this.defineMirrorRegion(0x3f80, 0x3f00, 0x20);
-    // this.defineMirrorRegion(0x3fc0, 0x3f00, 0x20);
-
-    // // Additional mirroring:
-    // this.defineMirrorRegion(0x3000, 0x2000, 0xf00);
-    // this.defineMirrorRegion(0x4000, 0x0000, 0x4000);
 
     if (mirroring === this.nes.rom.HORIZONTAL_MIRRORING) {
       // Horizontal mirroring.
@@ -309,14 +274,6 @@ PPU.prototype = {
     }
   },
 
-  // // Define a mirrored area in the address lookup table.
-  // // Assumes the regions don't overlap.
-  // // The 'to' region is the region that is physically in memory.
-  // defineMirrorRegion: function(fromStart, toStart, size) {
-  //   for (var i = 0; i < size; i++) {
-  //     this.vramMirrorTable[fromStart + i] = toStart + i;
-  //   }
-  // },
 
   startVBlank: function() {
     // Do NMI:
@@ -402,15 +359,14 @@ PPU.prototype = {
         if (this.scanline >= 21 && this.scanline <= 260) {
           // Render normally:
           if (this.f_bgVisibility) {
-// TODO ---- f_bgVisibility is zero in the new code but 1 in old code!!!!
             if (!this.scanlineAlreadyRendered) {
-              // update scroll (note: copying regH and regHT to cnt happens in renderBgScanline)
+              // update scroll (note: renderBgScanline copies regH and regHT to cnt)
               this.renderBgScanline(true, this.scanline + 1 - 21);
             }
             this.scanlineAlreadyRendered = false;
 
             // Check for sprite 0 (next scanline):
-            if (!this.hitSpr0 && this.f_spVisibility) {
+            if (this.hitSpr0 && this.f_spVisibility) {
               const y0 = this.spriteRam[0];
               const x0 = this.spriteRam[3];
               if (x0 >= -7 &&
@@ -522,34 +478,50 @@ PPU.prototype = {
     this.nes.ui.writeFrame(buffer);
   },
 
-  updateControlReg1: function(value) {
+  writePpuCtrl: function(value) {
     this.triggerRendering();
 
     // NOTE: nmiOnVblank does not appear to ever be used!
-    this.f_nmiOnVblank = (value & 0x80) >> 7;     // 0 or 1
+    this.f_nmiOnVblank = (value & 0x80) >>> 7;    // 0 or 1
     this.f_tallSprites = value & 0x20;            // boolean
     this.f_bgPatternTable = (value & 0x10) << 8;  // 0 or 0x1000
     this.f_spPatternTable = (value & 0x08) << 9;  // 0 or 0x1000
-    this.f_addrInc = (value & 0x04) >> 2;         // 0 or 1
-    this.f_nTblAddress = value & 3;               // 0, 1, 2, or 3
+    this.f_addrInc = (value & 0x04) >>> 2;        // 0 or 1
 
-    this.regV = (value >> 1) & 1;
+    this.regV = (value >>> 1) & 1;
     this.regH = value & 1;
-    this.reg1 = value;
   },
 
-  updateControlReg2: function(value) {
+  readPpuCtrl: function() {
+    return 0 |
+        (this.f_nmiOnVblank    && 0x80) |
+        (this.f_tallSprites    && 0x20) |
+        (this.f_bgPatternTable && 0x10) |
+        (this.f_spPatternTable && 0x08) |
+        (this.f_addrInc        && 0x04) |
+        (this.regV             && 0x02) |
+        (this.regH             && 0x01);
+  },
+
+  writePpuMask: function(value) {
     this.triggerRendering();
 
     // mbgr000000  (m = monochrome)
-    this.f_color = ((value | (value << 8)) & 0x1e0) << 1;
-    this.f_spVisibility = (value >> 4) & 1;
-    this.f_bgVisibility = (value >> 3) & 1;
-//console.log(`BG Visibility: ${this.f_bgVisibility} at ${this.nes.cpu.REG_PC.toString(16)} scanline ${this.scanline}:${this.curX}`);
-    this.f_spClipping = (value >> 2) & 1;
-    this.f_bgClipping = (value >> 1) & 1;
-    //this.updatePalettes();
-    this.reg2 = value;
+    this.f_color = (value << 1 | value << 9) & 0x3c0;
+    this.f_spVisibility = (value >>> 4) & 1;
+    this.f_bgVisibility = (value >>> 3) & 1;
+    this.f_spClipping = (value >>> 2) & 1;
+    this.f_bgClipping = (value >>> 1) & 1;
+  },
+
+  readPpuMask: function() {
+    return 0 |
+        (this.f_color >>> 1   & 0xe0) | // emphasis (bgr. ....)
+        (this.f_spVisibility && 0x10) |
+        (this.f_bgVisibility && 0x08) |
+        (this.f_spClipping   && 0x04) |
+        (this.f_bgClipping   && 0x02) |
+        (this.f_color >>> 9   & 0x01);  // monochrome
   },
 
   // CPU Register $2002:
@@ -660,6 +632,7 @@ PPU.prototype = {
     if (this.nes.debug) this.nes.debug.logMem(Debug.PPU_RD, this.vramAddress, value);
     // Note: reading from [0, $3eff] has weird buffering behavior.
     // https://wiki.nesdev.com/w/index.php/PPU_registers#The_PPUDATA_read_buffer_.28post-fetch.29
+
     if (this.vramAddress <= 0x3eff) {
       result = this.vramBufferedReadValue;
 
@@ -674,8 +647,7 @@ PPU.prototype = {
       // No buffering in this mem range. Read normally.
       result = value;
     }
-
-    // Increment by either 1 or 32, depending on d2 of Control Register 1:
+    // Increment by either 1 or 32, depending on d2 of PPUCTRL:
     this.vramAddress += this.f_addrInc === 1 ? 32 : 1;
 
     this.cntsFromAddress();
@@ -697,7 +669,7 @@ PPU.prototype = {
     // Invoke mapper latch:
     if (this.vramAddress < 0x2000) this.nes.mmap.latchAccess(this.vramAddress);
 
-    // Increment by either 1 or 32, depending on d2 of Control Register 1:
+    // Increment by either 1 or 32, depending on d2 of PPUCTRL:
     this.vramAddress += this.f_addrInc === 1 ? 32 : 1;
     this.regsFromAddress();
     this.cntsFromAddress();
@@ -728,8 +700,8 @@ PPU.prototype = {
     this.regH = (address >> 2) & 1;
     this.regVT = (this.regVT & 7) | ((address & 3) << 3);
 
-    address = this.vramTmpAddress & 0xff;
     this.regVT = (this.regVT & 24) | ((address >> 5) & 7);
+    address = this.vramTmpAddress & 0xff;
     this.regHT = address & 31;
   },
 
@@ -794,42 +766,6 @@ PPU.prototype = {
     }
   },
 
-  // // Reads from memory, taking into account
-  // // mirroring/mapping of address ranges.
-  // mirroredLoad: function(address) {
-  //   return this.vramMem[this.vramMirrorTable[address]];
-  // },
-
-  // Writes to memory, taking into account
-  // mirroring/mapping of address ranges.
-  // mirroredWrite: function(address, value) {
-  //   if (address >= 0x3f00 && address < 0x3f20) {
-  //     // Palette write mirroring.
-  //     if (address === 0x3f00 || address === 0x3f10) {
-  //       this.writeMem(0x3f00, value);
-  //       this.writeMem(0x3f10, value);
-  //     } else if (address === 0x3f04 || address === 0x3f14) {
-  //       this.writeMem(0x3f04, value);
-  //       this.writeMem(0x3f14, value);
-  //     } else if (address === 0x3f08 || address === 0x3f18) {
-  //       this.writeMem(0x3f08, value);
-  //       this.writeMem(0x3f18, value);
-  //     } else if (address === 0x3f0c || address === 0x3f1c) {
-  //       this.writeMem(0x3f0c, value);
-  //       this.writeMem(0x3f1c, value);
-  //     } else {
-  //       this.writeMem(address, value);
-  //     }
-  //   } else {
-  //     // Use lookup table for mirrored address:
-  //     if (address < this.vramMirrorTable.length) {
-  //       this.writeMem(this.vramMirrorTable[address], value);
-  //     } else {
-  //       throw new Error("Invalid VRAM address: " + address.toString(16));
-  //     }
-  //   }
-  // },
-
   triggerRendering: function() {
     if (this.scanline >= 21 && this.scanline <= 260) {
       // Render sprites, and combine:
@@ -867,120 +803,7 @@ PPU.prototype = {
     if (this.f_spVisibility) {
       this.renderSpritesPartially(startScan, scanCount, /* bgPri= */ 0);
     }
-
-    ///////this.validTileData = false;
   },
-
-  // renderBgScanline: function(bgbuffer, scan) {
-  //   var baseTile = this.regS === 0 ? 0 : 256;
-  //   var destIndex = (scan << 8) - this.regFH;
-
-  //   this.curNt = this.ntable1[this.cntV + this.cntV + this.cntH];
-
-  //   this.cntHT = this.regHT;
-  //   this.cntH = this.regH;
-  //   this.curNt = this.ntable1[this.cntV + this.cntV + this.cntH];
-
-  //   if (scan < 240 && scan - this.cntFV >= 0) {
-  //     var tscanoffset = this.cntFV << 3;
-  //     var scantile = this.scantile;
-  //     var attrib = this.attrib;
-  //     var ptTile = this.ptTile;
-  //     var nameTable = this.nameTable;
-  //     var imgPalette = this.imgPalette;
-  //     var pixrendered = this.pixrendered;
-  //     var targetBuffer = bgbuffer ? this.bgbuffer : this.buffer;
-
-  //     var t, tpix, att, col;
-
-  //     for (var tile = 0; tile < 32; tile++) {
-  //       if (scan >= 0) {
-  //         // Fetch tile & attrib data:
-  //         if (this.validTileData) {
-  //           // Get data from array:
-  //           t = scantile[tile];
-  //           if (typeof t === "undefined") {
-  //             continue;
-  //           }
-  //           tpix = t.pix;
-  //           att = attrib[tile];
-  //         } else {
-  //           // Fetch data:
-  //           t =
-  //             ptTile[
-  //               baseTile +
-  //                 nameTable[this.curNt].getTileIndex(this.cntHT, this.cntVT)
-  //             ];
-  //           if (typeof t === "undefined") {
-  //             continue;
-  //           }
-  //           tpix = t.pix;
-  //           att = nameTable[this.curNt].getAttrib(this.cntHT, this.cntVT);
-  //           scantile[tile] = t;
-  //           attrib[tile] = att;
-  //         }
-
-  //         // Render tile scanline:
-  //         var sx = 0;
-  //         var x = (tile << 3) - this.regFH;
-
-  //         if (x > -8) {
-  //           if (x < 0) {
-  //             destIndex -= x;
-  //             sx = -x;
-  //           }
-  //           if (t.opaque[this.cntFV]) {
-  //             for (; sx < 8; sx++) {
-  //               targetBuffer[destIndex] =
-  //                 imgPalette[tpix[tscanoffset + sx] + att];
-  //               pixrendered[destIndex] |= 256;
-  //               destIndex++;
-  //             }
-  //           } else {
-  //             for (; sx < 8; sx++) {
-  //               col = tpix[tscanoffset + sx];
-  //               if (col !== 0) {
-  //                 targetBuffer[destIndex] = imgPalette[col + att];
-  //                 pixrendered[destIndex] |= 256;
-  //               }
-  //               destIndex++;
-  //             }
-  //           }
-  //         }
-  //       }
-
-  //       // Increase Horizontal Tile Counter:
-  //       if (++this.cntHT === 32) {
-  //         this.cntHT = 0;
-  //         this.cntH++;
-  //         this.cntH %= 2;
-  //         this.curNt = this.ntable1[(this.cntV << 1) + this.cntH];
-  //       }
-  //     }
-
-  //     // Tile data for one row should now have been fetched,
-  //     // so the data in the array is valid.
-  //     this.validTileData = true;
-  //   }
-
-  //   // update vertical scroll:
-  //   this.cntFV++;
-  //   if (this.cntFV === 8) {
-  //     this.cntFV = 0;
-  //     this.cntVT++;
-  //     if (this.cntVT === 30) {
-  //       this.cntVT = 0;
-  //       this.cntV++;
-  //       this.cntV %= 2;
-  //       this.curNt = this.ntable1[(this.cntV << 1) + this.cntH];
-  //     } else if (this.cntVT === 32) {
-  //       this.cntVT = 0;
-  //     }
-
-  //     // Invalidate fetched data:
-  //     this.validTileData = false;
-  //   }
-  // },
 
   // Returns a 32-element array of 32-bit colors.
   palette: function() {
@@ -1000,11 +823,8 @@ PPU.prototype = {
     this.cntH = this.regH;
     this.nt = this.nametables[this.cntH | this.cntV << 1];
     let nt = 0x2000 | (((this.cntV << 1) | this.cntH) << 10);
-    //let nt = this.nameTable[(this.cntV << 1) | this.cntH];
 
     if (scan < 240 && scan - this.cntFV >= 0) {
-      // var tscanoffset = this.cntFV << 3;
-
       // palette with color mode included.
       const pal = PALETTE.subarray(this.f_color, this.f_color + 0x40);
       var pixrendered = this.pixrendered;
@@ -1017,18 +837,9 @@ PPU.prototype = {
           // Check the current value of the nametable.
           const tile = this.nt[this.cntVT << 5 | this.cntHT];
           let line = this.patternTable[baseTile | tile << 4 | this.cntFV];
-          //let line = this.nes.mmap.loadTileScanline(tileAddress);
           const attrByte = this.nt[0x3c0 | (this.cntVT & 0x1c) << 1 | this.cntHT >> 2];
-              // this.nes.mmap.loadPpu(
-              //     nt | 0x3c0 | ((this.cntVT & 0xfc) << 1) | (this.cntHT >> 2));
           const attrShift = (this.cntVT & 2) << 1 | (this.cntHT & 2);
           const att = (attrByte >> attrShift & 3) << 2;
-
-// if(d)console.log(`render tile #${tileX} (${this.cntVT.toString(16)}, ${this.cntHT.toString(16)}): tile id=${((baseTile ? 0x100 : 0) + tile).toString(16)} @ ${tileAddress.toString(16)}, att=${att}
-//   att addr=${(nt | 0x3c0 | ((this.cntHT & 0xfc) << 1) | (tileX >> 2)).toString(16)}
-//   att byte=${attrByte} shift=${attrShift}`);
-// ${[0,1,2,3,4,5,6,7].map(i=>this.nes.mmap.loadTileScanline(tileAddress&~7|i).toString(4).padStart(8,0)).join('\n')}`);
-// if(d)this.nes.debug.break = true;
 
           // Render tile scanline:
           let minx = 0;
@@ -1093,21 +904,11 @@ PPU.prototype = {
           // Show sprite.
           if (!this.f_tallSprites) {
             // 8x8 sprites
-            // let srcy1 = 0;
-            // let srcy2 = 8;
-            // if (y < startscan) {
-            //   srcy1 = startscan - y - 1;
-            // }
-            // if (y + 8 > startscan + scancount) {
-            //   srcy2 = startscan + scancount - y + 1;
-            // }
             this.renderSprite(
                 i,
                 this.f_spPatternTable | tile << 4,
                 Math.max(startscan - y - 1, 0),
-                // y < startscan ? startscan - y - 1 : 0;
                 Math.min(startscan + scancount - y + 1, 8),
-                // y + 8 > startscan + scancount ? startscan + scancount - y + 1 : 8,
                 x,
                 y + 1,
                 attr);
@@ -1117,39 +918,14 @@ PPU.prototype = {
             let top = tile;
             if (top & 0x10) top ^= 0x1010;
 
-            // var srcy1 = 0;
-            // var srcy2 = 8;
-
-            // if (y < startscan) {
-            //   srcy1 = startscan - y - 1;
-            // }
-
-            // if (y + 8 > startscan + scancount) {
-            //   srcy2 = startscan + scancount - y;
-            // }
-
             this.renderSprite(
                 i,
                 top + (attr & SPRITE_VERT_FLIP ? 16 : 0),
-                // y < startscan ? startscan - y - 1 : 0,
-                // should this by - y + 1
-                // y + 8 > startscan + scancount ? startscan + scancount - y : 8,
                 Math.max(startscan - y - 1, 0),
                 Math.min(startscan + scancount - y, 8),
                 x,
                 y + 1,
                 attr);
-
-            // srcy1 = 0;
-            // srcy2 = 8;
-
-            // if (y + 8 < startscan) {
-            //   srcy1 = startscan - (y + 9);
-            // }
-
-            // if (y + 16 > startscan + scancount) {
-            //   srcy2 = startscan + scancount - (y + 8);
-            // }
 
             this.renderSprite(
                 i,
@@ -1159,19 +935,6 @@ PPU.prototype = {
                 x,
                 y + 9,
                 attr);
-            // this.ptTile[top + (this.vertFlip[i] ? 0 : 1)].render(
-            //   this.buffer,
-            //   srcy1,
-            //   srcy2,
-            //   this.sprX[i],
-            //   this.sprY[i] + 1 + 8,
-            //   this.sprCol[i],
-            //   this.sprPalette,
-            //   this.horiFlip[i],
-            //   this.vertFlip[i],
-            //   i,
-            //   this.pixrendered
-            // );
           }
         }
       }
@@ -1181,10 +944,6 @@ PPU.prototype = {
   checkSprite0: function(scan) {
     this.spr0HitX = -1;
     this.spr0HitY = -1;
-
-    //var toffset;
-    //var x, y, t, i;
-    //var bufferIndex;
 
     const y = this.spriteRam[0] + 1;
     let tile = this.spriteRam[1] << 4;
@@ -1211,7 +970,6 @@ PPU.prototype = {
       }
     }
     if (addr < 0) return false; // not in range
-//console.log(`Check sprite 0 at scanline ${this.scanline}:${this.curX}`);
     const horizontalFlip = attr & SPRITE_HORI_FLIP ? 8 : 0;
     let line = this.patternTable[addr | horizontalFlip];
     line = (line & TILE_LO_MASK) | (line & TILE_HI_MASK) >> 1;
@@ -1220,7 +978,7 @@ PPU.prototype = {
     let cntH = this.regH ? 1 : 0;
     let cntV = this.regV ? 2 : 0;
     let scanlineY = (this.regVT << 3 | this.regFV) + scan;
-    let spriteX = (this.HT << 3 | this.FH) + x;
+    let spriteX = (this.regHT << 3 | this.regFH) + x;
     if (scanlineY > 0xf0) {
       cntV ^= 2;
       scanlineY -= 0xf0;
@@ -1237,11 +995,6 @@ PPU.prototype = {
     let bgLine = this.patternTable[bgTile | scanlineY & 7];
     bgLine = (bgLine & TILE_LO_MASK) | (bgLine & TILE_HI_MASK) >> 1;
     bgLine = (bgLine & 0xffff) << offsetX;
-        // (this.nes.mmap.loadPpu(
-        //     cntH | cntV | ((scanlineY & 0xf8) << 2) | tileX) << 4);
-    // let bgLine =
-    //     (this.nes.mmap.loadPpu(bgTile) | this.nes.mmap.loadPpu(bgTile ^ 8)) <<
-    //         offsetX;
     let hit = bgLine & line;
     if (!hit && offsetX) {
       // try the second tile.
@@ -1256,13 +1009,6 @@ PPU.prototype = {
       bgLine = this.patternTable[bgTile | scanlineY & 7];
       bgLine = (bgLine & TILE_LO_MASK) | (bgLine & TILE_HI_MASK) >> 1;
       bgLine = (bgLine & 0xffff) >>> (16 - offsetX);
-      // bgTile =
-      //     this.f_spPatternTable |
-      //     (this.nes.mmap.loadPpu(
-      //         cntH | cntV | ((scanlineY & 0xf8) << 2) | tileX) << 4);
-      // bgLine =
-      //     (this.nes.mmap.loadPpu(bgTile) | this.nes.mmap.loadPpu(bgTile ^ 8)) >>>
-      //         (8 - offsetX);
       hit = bgLine & line;
     }
 
@@ -1272,11 +1018,9 @@ PPU.prototype = {
       if (hitX >= 0 && hitX < 256 && this.pixrendered[scan << 8 | hitX]) {
         this.spr0HitX = hitX;
         this.spr0HitY = scan;
-//console.log(`  => hit at ${this.spr0HitX}, ${this.spr0HitY}`);
         return true;
       }
     }
-//console.log(`  => miss`);
     return false;
   },
 
@@ -1315,10 +1059,11 @@ PPU.prototype = {
     // this.vramMem[address] = value;
 
     if (address < 0x2000) {
-      if (!this.usingChrRam) return;
+      if (!this.nes.mmap.chrRam) return;
+      // CHR RAM writes need to be mangled before updating.
       const hi = address & 8 ?
           value :
-          collateBits(this.patternTable[address] >> 1 & TILE_LO_MASK);
+          collateBits(this.patternTable[address] >>> 1 & TILE_LO_MASK);
       const lo = address & 8 ?
           collateBits(this.patternTable[address & ~8] & TILE_LO_MASK) :
           value;
@@ -1335,97 +1080,7 @@ PPU.prototype = {
         this.paletteRam[address & 0x1f] = value;
       }
     }
-
-    // Update internally buffered data:
-    // if (address < 0x2000) {
-    //   this.patternWrite(address, value);
-    // } else if (address >= 0x2000 && address < 0x23c0) {
-    //   this.nameTableWrite(this.ntable1[0], address - 0x2000, value);
-    // } else if (address >= 0x23c0 && address < 0x2400) {
-    //   this.attribTableWrite(this.ntable1[0], address - 0x23c0, value);
-    // } else if (address >= 0x2400 && address < 0x27c0) {
-    //   this.nameTableWrite(this.ntable1[1], address - 0x2400, value);
-    // } else if (address >= 0x27c0 && address < 0x2800) {
-    //   this.attribTableWrite(this.ntable1[1], address - 0x27c0, value);
-    // } else if (address >= 0x2800 && address < 0x2bc0) {
-    //   this.nameTableWrite(this.ntable1[2], address - 0x2800, value);
-    // } else if (address >= 0x2bc0 && address < 0x2c00) {
-    //   this.attribTableWrite(this.ntable1[2], address - 0x2bc0, value);
-    // } else if (address >= 0x2c00 && address < 0x2fc0) {
-    //   this.nameTableWrite(this.ntable1[3], address - 0x2c00, value);
-    // } else if (address >= 0x2fc0 && address < 0x3000) {
-    //   this.attribTableWrite(this.ntable1[3], address - 0x2fc0, value);
-    // } else if (address >= 0x3f00 && address < 0x3f20) {
-    //   this.updatePalettes();
-    // }
   },
-
-  // loadChrPage(bank, page, size) {
-  //   // ex: loadChrPage(0x1000, 5, 0x800)
-  //   //     0x800 has 128 tiles
-  //   //     0x1000 is at patternBanks[4] and [5].
-  //   //     2k page 5 is actually 1k pages 10 and 11 
-  //   if (size < 0x400) throw new Error('cannot bank switch less than 1K of CHR ROM');
-  //   if (page < 0) page += Math.floor(this.patternTable.length * 2 / size);
-  //   let value = page * size >>> 10;
-  //   for (let i = bank; i < bank + size; i += 0x400) {
-  //     this.patternBanks[i >>> 10] = value++;
-  //   }
-  // }
-
-  // // Reads data from $3f00 to $f20
-  // // into the two buffered palettes.
-  // updatePalettes: function() {
-  //   // TODO - can we just inlinw this rather than buffering?
-  //   const pal = this.f_color;
-  //   for (let i = 0; i < 16; i++) {
-  //     this.imgPalette[i] = PALETTE[pal | this.nes.mmap.loadPpu(0x3f00 | i)];
-  //     this.sprPalette[i] = PALETTE[pal | this.nes.mmap.loadPpu(0x3f10 | i)];
-  //   }
-  // },
-
-  // // Updates the internal pattern
-  // // table buffers with this new byte.
-  // // In vNES, there is a version of this with 4 arguments which isn't used.
-  // patternWrite: function(address, value) {
-  //   var tileIndex = Math.floor(address / 16);
-  //   var leftOver = address % 16;
-  //   if (leftOver < 8) {
-
-  //     // TODO - replace vramMem with mmap.loadPpu
-  //     // TODO - ensure removed/added fields consistent across
-  //     // ctor, json, etc
-
-  //     this.ptTile[tileIndex].setScanline(
-  //       leftOver,
-  //       value,
-  //       this.vramMem[address + 8]
-  //     );
-  //   } else {
-  //     this.ptTile[tileIndex].setScanline(
-  //       leftOver - 8,
-  //       this.vramMem[address - 8],
-  //       value
-  //     );
-  //   }
-  // },
-
-  // // Updates the internal name table buffers
-  // // with this new byte.
-  // nameTableWrite: function(index, address, value) {
-  //   this.nameTable[index].tile[address] = value;
-
-  //   // Update Sprite #0 hit:
-  //   //updateSpr0Hit();
-  //   this.checkSprite0(this.scanline - 20);
-  // },
-
-  // // Updates the internal pattern
-  // // table buffers with this new attribute
-  // // table byte.
-  // attribTableWrite: function(index, address, value) {
-  //   this.nameTable[index].writeAttrib(address, value);
-  // },
 
   // Updates the internally buffered sprite
   // data with this new byte of info.
@@ -1447,13 +1102,6 @@ PPU.prototype = {
   },
 
   renderSprite: function(index, tileAddress, srcy1, srcy2, dx, dy, attr) {
-      // palette, = attr & 3
-      // flipHorizontal, = attr & 040
-      // flipVertical, = attr & 0x80
-      //pri, = index
-      //priTable) { = this.pixrendered
-
-    // const palette = PALETTE.subarray(this.f_color, this.f_color + 0x40);
     const buffer = this.buffer;
     const priTable = this.pixrendered;
     // NOTE: backwards iteration is more convenient.
@@ -1462,17 +1110,6 @@ PPU.prototype = {
     // NOTE: flipVertical is simply ^7 on the address!
     //       and for flipHorizontal we can reverse the bits
     const palAdd = (attr & SPRITE_PALETTE) << 2;
-
-// const d=window.DEBUG;
-// if(d)console.log(`renderSprite ${index.toString(16)} from ${srcy1}..${srcy2}
-// tile=${tileAddress.toString(16)} attr=${attr.toString(16)} flip=${flipHorizontal?'H':''}${flipVertical?'V':''}
-// pal=${pal} @ ${pal.byteOffset} => ${Array.from(palette).slice(pal, pal + 4).map(x=>x.toString(16).padStart(6,0)).join(',')}}
-// ${[0,1,2,3,4,5,6,7].map(i=>this.nes.mmap.loadTileScanline(tileAddress&~7|i).toString(4).padStart(8,0)).join('\n')}`);
-// if(d)console.log(`render tile #${tileX} (${this.cntVT.toString(16)}, ${this.cntHT.toString(16)}): tile id=${((baseTile ? 0x100 : 0) + tile).toString(16)} @ ${tileAddress.toString(16)}, att=${att}
-//   att addr=${(nt | 0x3c0 | ((this.cntHT & 0xfc) << 1) | (tileX >> 2)).toString(16)}
-//   att byte=${attrByte} shift=${attrShift}`);
-// if(d)this.nes.debug.break = true;
-
 
     let srcx1 = 0;
     let srcx2 = 8;
@@ -1502,8 +1139,6 @@ PPU.prototype = {
         continue;
       }
       let line = this.patternTable[tileAddress | flipHorizontal | y ^ flipVertical];
-// this.nes.mmap.loadTileScanline(tileAddress | y ^ flipVertical,
-//                                                 !flipHorizontal);
       for (let x = 0; x < 8; x++) {
         if (x >= srcx1 && x < srcx2) {
           const color = line & 3;
@@ -1523,185 +1158,122 @@ PPU.prototype = {
     }
   },
 
+  writeSavestate() {
+    const nt = new Uint8Array(0x1000);
+    nt.set(this.nametable0, 0x000);
+    nt.set(this.nametable1, 0x400);
+    nt.set(this.nametable2, 0x800);
+    nt.set(this.nametable3, 0xc00);
+    this.cntsToAddress();
+    this.regsToAddress();
+    const table = {
+      // pattern table RAM/banking is handled by MMAP
+      'nt': nt,
+      'spr': this.spriteRam,
+      'pal': this.paletteRam,
+      'reg': Uint8Array.of(
+          this.vramAddress & 0xff,    // v
+          this.vramAddress >>> 8,
+          this.vramTmpAddress & 0xff, // t
+          this.vramTmpAddress >>> 8,
+          this.firstWrite ? 0 : 1,    // w
+          this.regFH),                // x
+      'io': Uint8Array.of(
+          this.vramBufferedReadValue,
+          this.sramAddress,
+          this.status,
+          this.readPpuCtrl(),
+          this.readPpuMask(),
+          this.currentMirroring),
+    };
 
-  JSON_PROPERTIES: [
-    // Memory
-    "vram",
-    // Counters
-    "cntFV",
-    "cntV",
-    "cntH",
-    "cntVT",
-    "cntHT",
-    // Registers
-    "reg1",
-    "reg2",
-    "regFV",
-    "regV",
-    "regH",
-    "regVT",
-    "regHT",
-    "regFH",
-    // VRAM addr
-    "vramAddress",
-    "vramTmpAddress",
-    // Control/Status registers
-    "f_nmiOnVblank",
-    "f_tallSprites",
-    "f_bgPatternTable",
-    "f_spPatternTable",
-    "f_addrInc",
-    "f_nTblAddress",
-    "f_color",
-    "f_spVisibility",
-    "f_bgVisibility",
-    "f_spClipping",
-    "f_bgClipping",
-    "status",
-    // VRAM I/O
-    "vramBufferedReadValue",
-    "firstWrite",
-    // Mirroring
-    "currentMirroring",
-    // SPR-RAM I/O
-    "sramAddress",
-    // Sprites. Most sprite data is rebuilt from spriteMem
-    "hitSpr0",
-    // Rendering progression
-    "curX",
-    "scanline",
-    "lastRenderedScanline",
-    // Used during rendering
-    "attrib",
-    "buffer",
-    "bgbuffer",
-    "pixrendered",
-    // Misc
-    "requestEndFrame",
-    "nmiOk",
-    "dummyCycleToggle",
-    "nmiCounter",
-    "scanlineAlreadyRendered"
-  ],
-
-  toJSON: function() {
-    // var i;
-    // var state = utils.toJSON(this);
-
-    // state.nameTable = [];
-    // for (i = 0; i < this.nameTable.length; i++) {
-    //   state.nameTable[i] = this.nameTable[i].toJSON();
-    // }
-
-    // state.ptTile = [];
-    // for (i = 0; i < this.ptTile.length; i++) {
-    //   state.ptTile[i] = this.ptTile[i].toJSON();
-    // }
-
-    // return state;
+    // NOTE: if we're in the middle of rendering a frame, then
+    // there's quite a bit more state to record.
+    if (this.scanline > 0) {
+      table['partial'] = new BinaryWriter()
+          .writeTable({
+            'data': Uint16Array.of(
+                this.hitSpr0,
+                this.spr0HitX,
+                this.spr0HitY,
+                this.curX,
+                this.scanline,
+                this.lastRenderedScanline,
+                this.requestEndFrame,
+                this.dummyCycleToggle,
+                this.nmiCounter,
+                this.scanlineAlreadyRendered),
+            'buf': this.buffer,
+            'bg': this.bgbuffer,
+            'pix': this.pixrendered,
+          })
+          .toArrayBuffer();
+    }
+    return new BinaryWriter()
+        .writeTable(table)
+        .toArrayBuffer();
   },
 
-  fromJSON: function(state) {
-    // var i;
-
-    // utils.fromJSON(this, state);
-
-    // for (i = 0; i < this.nameTable.length; i++) {
-    //   this.nameTable[i].fromJSON(state.nameTable[i]);
-    // }
-
-    // for (i = 0; i < this.ptTile.length; i++) {
-    //   this.ptTile[i].fromJSON(state.ptTile[i]);
-    // }
-
-    // // Sprite data:
-    // for (i = 0; i < this.spriteMem.length; i++) {
-    //   this.spriteRamWriteUpdate(i, this.spriteMem[i]);
-    // }
-  }
+  restoreSavestate(buffer) {
+    let midrender = false;
+    new BinaryReader(buffer).readTable({
+      'nt': (nt) => {
+        this.nametable0.set(new Uint8Array(nt, 0x000, 0x400));
+        this.nametable1.set(new Uint8Array(nt, 0x400, 0x400));
+        this.nametable2.set(new Uint8Array(nt, 0x800, 0x400));
+        this.nametable3.set(new Uint8Array(nt, 0xc00, 0x400));
+      },
+      'spr': (mem) => this.spriteRam.set(new Uint8Array(mem)),
+      'pal': (mem) => this.paletteRam.set(new Uint8Array(mem)),
+      'reg': unpack(Uint8Array, (vlo, vhi, tlo, thi, w, x) => {
+        this.vramAddress = vlo | vhi << 8;
+        this.vramTmpAddress = tlo | thi << 8;
+        this.firstWrite = !w;
+        this.regFH = x;
+      }),
+      'io': unpack(Uint8Array, (buf, sram, sts, ctl, mask, mir) => {
+        this.vramBufferedReadValue = buf;
+        this.sramAddress = sram;
+        this.status = sts;
+        this.writePpuCtrl(ctl);
+        this.writePpuMask(mask);
+        this.setMirroring(mir);
+      }),
+      'partial': (value) => {
+        midrender = true;
+        new BinaryReader(value).readTable({
+          'data': unpack(
+              Uint16Array, (h, hx, hy, x, y, last, end, dummy, nmi, rnd) => {
+                this.hitSpr0 = h;
+                this.spr0HitX = hx;
+                this.spr0HitY = hy;
+                this.curX = x;
+                this.scanline = y;
+                this.lastRenderedScanline = last;
+                this.requestEndFrame = end;
+                this.dummyCycleToggle = dummy;
+                this.nmiCounter = nmi;
+                this.scanlineAlreadyRendered = rnd;
+              }),
+          'buf': (value) => this.buffer.set(new Uint32Array(value)),
+          'bg': (value) => this.bgbuffer.set(new Uint32Array(value)),
+          'pix': (value) => this.pixrendered.set(new Uint16Array(value)),
+        });
+      },
+    });
+    if (!midrender) {
+      // reset rendering variables?
+      this.hitSpr0 = false;
+      this.spr0HitX = this.spr0HitY = -1;
+      this.curX = this.scanline = this.nmiCounter = 0;
+      this.lastRenderedScanline = -1;
+      this.requestEndFrame = false;
+      this.dummyCycleToggle = false;
+      this.scanlineAlreadyRendered = false;
+      // No need to worry about buffers, they'll be reset in startFrame.
+    }
+  },
 };
-
-// class NameTable {
-//   constructor(nes, offset) {
-//     this.nes = nes;
-//     this.offset = offset;
-//   }
-
-//   /** Returns the index of a Tile. */
-//   getTileIndex(x, y) {
-//     return this.nes.mmap.loadPpu(this.offset | (y << 5) | 5);
-//   }
-
-//   getAttrib(x, y) {
-//     const mem =
-//         this.nes.mmap.loadPpu(
-//             this.offset | 0x3c0 | ((y & 0xfc) << 1) | (x >> 2));
-//     const shift = ((y & 2) << 1) | (x & 2);
-//     return (mem >> shift) & 3;
-//   }
-
-//   writeAttrib(index, value) {
-//     // no need
-//   }
-// }
-
-
-// var NameTable = function(width, height, name) {
-//   this.width = width;
-//   this.height = height;
-//   this.name = name;
-
-//   this.tile = new Array(width * height);
-//   this.attrib = new Array(width * height);
-//   for (var i = 0; i < width * height; i++) {
-//     this.tile[i] = 0;
-//     this.attrib[i] = 0;
-//   }
-// };
-
-// NameTable.prototype = {
-//   getTileIndex: function(x, y) {
-//     return this.tile[y * this.width + x];
-//   },
-
-//   getAttrib: function(x, y) {
-//     return this.attrib[y * this.width + x];
-//   },
-
-//   writeAttrib: function(index, value) {
-//     var basex = (index % 8) * 4;
-//     var basey = Math.floor(index / 8) * 4;
-//     var add;
-//     var tx, ty;
-//     var attindex;
-
-//     for (var sqy = 0; sqy < 2; sqy++) {
-//       for (var sqx = 0; sqx < 2; sqx++) {
-//         add = (value >> (2 * (sqy * 2 + sqx))) & 3;
-//         for (var y = 0; y < 2; y++) {
-//           for (var x = 0; x < 2; x++) {
-//             tx = basex + sqx * 2 + x;
-//             ty = basey + sqy * 2 + y;
-//             attindex = ty * this.width + tx;
-//             this.attrib[attindex] = (add << 2) & 12;
-//           }
-//         }
-//       }
-//     }
-//   },
-
-//   toJSON: function() {
-//     return {
-//       tile: this.tile,
-//       attrib: this.attrib
-//     };
-//   },
-
-//   fromJSON: function(s) {
-//     this.tile = s.tile;
-//     this.attrib = s.attrib;
-//   }
-// };
 
 const PALETTE = (() => {
   const colors = [
@@ -1764,31 +1336,6 @@ const collateBits = (value) => {
 // 256-element look-up table for writing bits of CHR RAM.
 const TILE_LO_MASK = 0b0101010101010101; // 0x5555
 const TILE_HI_MASK = 0b1010101010101010; // 0xaaaa
-const TILE_WRITE = (() => {
-  const bits = [
-    0b01000000000000000000000000000001, // 0x40000001
-    0b00010000000000000000000000000100, // 0x10000004
-    0b00000100000000000000000000010000, // 0x04000010
-    0b00000001000000000000000001000000, // 0x01000040
-    0b00000000010000000000000100000000, // 0x00400100
-    0b00000000000100000000010000000000, // 0x00100400
-    0b00000000000001000001000000000000, // 0x00041000
-    0b00000000000000010100000000000000, // 0x00014000
-  ];
-  const out = new Uint32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let x = i;
-    let y = 0;
-    let s = 0;
-    while (x) {
-      if (x & 1) y |= bits[s];
-      x >>>= 1;
-      s++;
-    }
-    out[i] = y;
-  }
-  return out;
-})();
 
 const IMG_PALETTE = 0x3f00;
 const SPR_PALETTE = 0x3f10;
@@ -1797,7 +1344,5 @@ const SPRITE_PRIORITY_BG = 0x20;
 const SPRITE_HORI_FLIP = 0x40;
 const SPRITE_VERT_FLIP = 0x80;
 
-// VIEW NAMETABLE:
+// TO VIEW NAMETABLE:
 // new Array(30).fill(0).map((_,x)=>this.nt.slice(x*32,x*32+32).map(z=>z.toString(16).padStart(2,0)).join(' ')).join('\n')
-
-window.SPR = 0x11b0;

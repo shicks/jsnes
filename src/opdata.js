@@ -1,3 +1,5 @@
+import * as utils from './utils.js';
+
 // TODO - pull out all the prototype properties into module constants.
 // Consider just making this a few simple exported tables?
 

@@ -5,7 +5,7 @@ import {PPU} from './ppu.js';
 import {PAPU} from './papu.js';
 import {ROM} from './rom.js';
 import {Debug} from './debug.js';
-import {BinaryReader, BinaryWriter} from './binary.js';
+import {BinaryReader, BinaryWriter, unpack} from './binary.js';
 
 export class NES {
   constructor(opts) {
@@ -79,7 +79,7 @@ export class NES {
   }
 
   frame() {
-    var cycles = 0;
+    let cycles = 0;
     if (this.breakpointCycles != null) {
       cycles = this.breakpointCycles;
       this.breakpointCycles = null;
@@ -135,6 +135,10 @@ export class NES {
           if (ppu.nmiCounter === 0) {
             ppu.requestEndFrame = false;
             ppu.startVBlank();
+            // NOTE: we're dropping cycles on the floor here,
+            // probably we should keep track of where we're at,
+            // though breakpointCycles is not quite right since
+            // it affects startFrame().
             break FRAMELOOP;
           }
         }
@@ -252,23 +256,31 @@ export class NES {
   // Header: "NES-STA\x1a"
   // Data:   a table containing {cpu, ppu, mmap} state.
   writeSavestate() {
+    const table = {
+      'cpu': this.cpu.writeSavestate(),
+      'ppu': this.ppu.writeSavestate(),
+      'mmap': this.mmap.writeSavestate(),
+    };
+    if (this.breakpointCycles != null) {
+      table['partial'] = Uint16Array.of(this.breakpointCycles);
+    }
     return new BinaryWriter()
         .writeStringFixed('NES-STA\x1a')
-        .writeTable({
-          'cpu': this.cpu.writeSavestate(),
-          'ppu': this.ppu.writeSavestate(),
-          'mmap': this.mmap.writeSavestate(),
-        })
+        .writeTable(table)
         .toArrayBuffer();
   }
 
   restoreSavestate(buffer) {
+    this.breakpointCycles = null;
     new BinaryReader(buffer)
         .expectString('NES-STA\x1a', 'Not a valid savestate')
         .readTable({
           'cpu': (value) => this.cpu.restoreSavestate(value),
           'ppu': (value) => this.cpu.restoreSavestate(value),
           'mmap': (value) => this.mmap.restoreSavestate(value),
+          'partial': unpack(Uint16Array, (cycles) => {
+            this.breakpointCycles = cycles;
+          }),
         });
   }
 }
