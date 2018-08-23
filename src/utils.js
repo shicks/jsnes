@@ -8,20 +8,6 @@ export function copyArray(src) {
   return src.slice(0);
 }
 
-export function fromJSON(obj, state) {
-  for (var i = 0; i < obj.JSON_PROPERTIES.length; i++) {
-    obj[obj.JSON_PROPERTIES[i]] = state[obj.JSON_PROPERTIES[i]];
-  }
-}
-
-export function toJSON(obj) {
-  var state = {};
-  for (var i = 0; i < obj.JSON_PROPERTIES.length; i++) {
-    state[obj.JSON_PROPERTIES[i]] = obj[obj.JSON_PROPERTIES[i]];
-  }
-  return state;
-}
-
 export function hex(pad, num) {
   return '$' + num.toString(16).padStart(pad, 0);
 }
@@ -80,7 +66,7 @@ export class BiMap extends Map {
 // writes.  And if the same page is mirrored into two banks at once, we're in
 // even more trouble...
 export class RomBankSwitcher {
-  constructor(data, windowSize, cacheSize = 128) {
+  constructor(data, windowSize, cacheSize = 192) {
     /** @const {!TypedArray} The full data. */
     this.data = data || new Uint16Array(windowSize); // type???
     /** @const {number} The total amount that can be addressed at once. */
@@ -146,6 +132,7 @@ export class RomBankSwitcher {
   }
 
   restore(banks) {
+    if (banks instanceof ArrayBuffer) banks = new Uint8Array(banks);
     const size = (1 << this.windowBits) / banks.length;
     let addr = 0;
     for (const bank of banks) {

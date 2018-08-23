@@ -235,22 +235,6 @@ export class NES {
     // this.papu.setSampleRate(this.opts.sampleRate, false);
   }
 
-  toJSON() {
-    return {
-      romData: this.romData,
-      cpu: this.cpu.toJSON(),
-      mmap: this.mmap.toJSON(),
-      ppu: this.ppu.toJSON()
-    };
-  }
-
-  fromJSON(s) {
-    this.loadROM(s.romData);
-    this.cpu.fromJSON(s.cpu);
-    this.mmap.fromJSON(s.mmap);
-    this.ppu.fromJSON(s.ppu);
-  }
-
   // SAVESTATE FORMAT
   // ----------------
   // Header: "NES-STA\x1a"
@@ -261,11 +245,12 @@ export class NES {
       'ppu': this.ppu.writeSavestate(),
       'mmap': this.mmap.writeSavestate(),
     };
+    // TODO - what about this.romData?
     if (this.breakpointCycles != null) {
       table['partial'] = Uint16Array.of(this.breakpointCycles);
     }
     return new BinaryWriter()
-        .writeStringFixed('NES-STA\x1a')
+        .writeStringFixedLength('NES-STA\x1a')
         .writeTable(table)
         .toArrayBuffer();
   }
@@ -276,11 +261,12 @@ export class NES {
         .expectString('NES-STA\x1a', 'Not a valid savestate')
         .readTable({
           'cpu': (value) => this.cpu.restoreSavestate(value),
-          'ppu': (value) => this.cpu.restoreSavestate(value),
+          'ppu': (value) => this.ppu.restoreSavestate(value),
           'mmap': (value) => this.mmap.restoreSavestate(value),
           'partial': unpack(Uint16Array, (cycles) => {
             this.breakpointCycles = cycles;
           }),
         });
+    // TODO - loadROM(this.romData) or s.romData?  reloadROM()?
   }
 }

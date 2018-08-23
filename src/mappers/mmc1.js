@@ -117,22 +117,25 @@ export class MMC1 extends NROM {
     // not yet.
   }
 
-  toJSON() {
-    var s = super.toJSON();
-    s.mmc1 = [
-      this.shiftRegister,
-      this.control,
-      this.chrLo,
-      this.chrHi,
-      this.prgPage,
-    ];
-    return s;
+  buildSavestate(table) {
+    super.buildSavestate(table);
+    table['mmc1'] = Uint8Array.of(
+        this.shiftRegister,
+        this.control,
+        this.chrLo,
+        this.chrHi,
+        this.prgPage);
   }
 
-  fromJSON(s) {
-    super.fromJSON(s);
-    [this.shiftRegister, this.control, this.chrLo, this.chrHi, this.prgPage] =
-        s.mmc1;
+  parseSavestate(table) {
+    super.parseSavestate(table);
+    ((shift, ctl, chrlo, chrhi, prg) => {
+      this.shiftRegister = shift;
+      this.control = ctl;
+      this.chrLo = chrlo;
+      this.chrHi = chrhi;
+      this.prgPage = prg;
+    })(...new Uint8Array(table['mmc1']));
     this.update();
   }
 }

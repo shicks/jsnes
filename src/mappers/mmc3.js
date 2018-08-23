@@ -1,31 +1,25 @@
 import {NROM} from './nrom.js';
 
+const BANK_SELECT_CHR_INVERTED = 0x80;
+const BANK_SELECT_PRG_INVERTED = 0x40;
+const BANK_SELECT_ADDRESS_MASK = 0x07;
+
 // Mapper 4: MMC3 and MMC6
 export class MMC3 extends NROM {
   constructor(nes) {
     super(nes);
 
-    this.CMD_SEL_2_1K_VROM_0000 = 0;
-    this.CMD_SEL_2_1K_VROM_0800 = 1;
-    this.CMD_SEL_1K_VROM_1000 = 2;
-    this.CMD_SEL_1K_VROM_1400 = 3;
-    this.CMD_SEL_1K_VROM_1800 = 4;
-    this.CMD_SEL_1K_VROM_1C00 = 5;
-    this.CMD_SEL_ROM_PAGE1 = 6;
-    this.CMD_SEL_ROM_PAGE2 = 7;
-
-    this.command = null;
-    this.prgAddressSelect = null;
-    this.chrAddressSelect = null;
-    this.pageNumber = null;
-    this.irqCounter = null;
-    this.irqLatchValue = null;
-    this.irqEnable = null;
-    this.prgAddressChanged = false;
+    // State
+    this.bankSelect = 0;                   // Register $8000
+    this.banks = [0, 0, 0, 0, 0, 0, 0, 0]; // Register $8001
+    this.irqLatchValue = 0;                // Register $C000
+    this.irqCounter = 0;
+    this.irqEnable = true;                 // Register $E000, $E001
   }
 
   initializePrgRom() {
-    this.loadPrgPage(0xc000, -1, 0x4000);
+    this.loadPrgPage(0xe000, -1, 0x2000);
+    // All other initial pages are unspecified
   }
 
   write8(addr, value) {
@@ -34,17 +28,13 @@ export class MMC3 extends NROM {
     if (addr < 0xc000) {
       if (addr < 0xa000) {
         if (addr == 0x8000) {
-          // 8000: Command/Address Select register
-          this.command = value & 7;
-          const tmp = (value >> 6) & 1;
-          if (tmp !== this.prgAddressSelect) {
-            this.prgAddressChanged = true;
-          }
-          this.prgAddressSelect = tmp;
-          this.chrAddressSelect = (value >> 7) & 1;
+          // 8000: Address Select register
+          this.bankSelect = value;
+          this.updateBanks();
         } else {
           // 8001: Page number for command
-          this.executeCommand(this.command, value);
+          this.banks[this.bankSelect & BANK_SELECT_ADDRESS_MASK] = value;
+          this.updateBanks();
         }
       } else {
         if (addr == 0xa000) {
@@ -63,12 +53,12 @@ export class MMC3 extends NROM {
     } else {
       if (addr < 0xe000) {
         if (addr == 0xc000) {
-          // C000: IRQ Counter register
-          this.irqCounter = value;
+          // C000: IRQ Latch
+          this.irqCounter = this.irqLatchValue = value;
           //nes.ppu.mapperIrqCounter = 0;
         } else {
-          // C001: IRQ Latch register
-          this.irqLatchValue = value;
+          // C001: IRQ Reload
+          this.irqCounter = this.irqLatchValue;
         }
       } else {
         if (addr == 0xe000) {
@@ -83,100 +73,21 @@ export class MMC3 extends NROM {
     }
   }
 
-  executeCommand(cmd, arg) {
-    switch (cmd) {
-    case this.CMD_SEL_2_1K_VROM_0000:
-      // Select 2 1KB VROM pages at 0x0000:
-      if (this.chrAddressSelect === 0) {
-        this.loadChrPage(0x0000, arg, 0x400);
-        this.loadChrPage(0x0400, arg + 1, 0x400);
-      } else {
-        this.loadChrPage(0x1000, arg, 0x400);
-        this.loadChrPage(0x1400, arg + 1, 0x400);
-      }
-      break;
-
-    case this.CMD_SEL_2_1K_VROM_0800:
-      // Select 2 1KB VROM pages at 0x0800:
-      if (this.chrAddressSelect === 0) {
-        this.loadChrPage(0x0800, arg, 0x400);
-        this.loadChrPage(0x0c00, arg + 1, 0x400);
-      } else {
-        this.loadChrPage(0x1800, arg, 0x400);
-        this.loadChrPage(0x1c00, arg + 1, 0x400);
-      }
-      break;
-
-    case this.CMD_SEL_1K_VROM_1000:
-      // Select 1K VROM Page at 0x1000:
-      if (this.chrAddressSelect === 0) {
-        this.loadChrPage(0x1000, arg, 0x400);
-      } else {
-        this.loadChrPage(0x0000, arg, 0x400);
-      }
-      break;
-
-    case this.CMD_SEL_1K_VROM_1400:
-      // Select 1K VROM Page at 0x1400:
-      if (this.chrAddressSelect === 0) {
-        this.loadChrPage(0x1400, arg, 0x400);
-      } else {
-        this.loadChrPage(0x400, arg, 0x400);
-      }
-      break;
-
-    case this.CMD_SEL_1K_VROM_1800:
-      // Select 1K VROM Page at 0x1800:
-      if (this.chrAddressSelect === 0) {
-        this.loadChrPage(0x1800, arg, 0x400);
-      } else {
-        this.loadChrPage(0x0800, arg, 0x400);
-      }
-      break;
-
-    case this.CMD_SEL_1K_VROM_1C00:
-      // Select 1K VROM Page at 0x1C00:
-      if (this.chrAddressSelect === 0) {
-        this.loadChrPage(0x1c00, arg, 0x400);
-      } else {
-        this.loadChrPage(0x0c00, arg, 0x400);
-      }
-      break;
-
-    case this.CMD_SEL_ROM_PAGE1:
-      if (this.prgAddressChanged) {
-        // Load the two hardwired banks:
-        if (this.prgAddressSelect === 0) {
-          this.loadPrgPage(0xc000, -2, 0x2000);
-        } else {
-          this.loadPrgPage(0x8000, -2, 0x2000);
-        }
-        this.prgAddressChanged = false;
-      }
-
-      // Select first switchable ROM page:
-      if (this.prgAddressSelect === 0) {
-        this.loadPrgPage(0x8000, arg, 0x2000);
-      } else {
-        this.loadPrgPage(0xc000, arg, 0x2000);
-      }
-      break;
-
-    case this.CMD_SEL_ROM_PAGE2:
-      // Select second switchable ROM page:
-      this.loadPrgPage(0xa000, arg, 0x2000);
-
-      // hardwire appropriate bank:
-      if (this.prgAddressChanged) {
-        // Load the two hardwired banks:
-        if (this.prgAddressSelect === 0) {
-          this.loadPrgPage(0xc000, -2, 0x2000);
-        } else {
-          this.loadPrgPage(0x8000, -2, 0x2000);
-        }
-        this.prgAddressChanged = false;
-      }
-    }
+  updateBanks() {
+    const chrInvert = this.bankSelect & BANK_SELECT_CHR_INVERTED ? 0x1000 : 0;
+    const prgInvert = this.bankSelect & BANK_SELECT_CHR_INVERTED ? 0x4000 : 0;
+    this.loadChrPages(
+        [0x0000 ^ chrInvert, this.banks[0] >>> 1, 0x0800],
+        [0x0800 ^ chrInvert, this.banks[1] >>> 1, 0x0800],
+        [0x1000 ^ chrInvert, this.banks[2], 0x0400],
+        [0x1400 ^ chrInvert, this.banks[3], 0x0400],
+        [0x1800 ^ chrInvert, this.banks[4], 0x0400],
+        [0x1c00 ^ chrInvert, this.banks[5], 0x0400]);
+    this.loadPrgPages(
+        [0x8000 ^ prgInvert, this.banks[6], 0x2000],
+        [0xa000,             this.banks[7], 0x2000],
+        [0xc000 ^ prgInvert, -2,            0x2000],
+        [0xe000,             -1,            0x2000]);
   }
 
   clockIrqCounter() {
@@ -193,28 +104,24 @@ export class MMC3 extends NROM {
     }
   }
 
-  toJSON() {
-    var s = super.toJSON();
-    s.command = this.command;
-    s.prgAddressSelect = this.prgAddressSelect;
-    s.chrAddressSelect = this.chrAddressSelect;
-    s.pageNumber = this.pageNumber;
-    s.irqCounter = this.irqCounter;
-    s.irqLatchValue = this.irqLatchValue;
-    s.irqEnable = this.irqEnable;
-    s.prgAddressChanged = this.prgAddressChanged;
-    return s;
+  buildSavestate(table) {
+    super.buildSavestate(table);
+    table['mmc3'] = Uint8Array.of(
+        this.bankSelect,
+        this.irqCounter,
+        this.irqLatchValue,
+        this.irqEnable,
+        ...this.banks);
   }
 
-  fromJSON(s) {
-    super.fromJSON(s);
-    this.command = s.command;
-    this.prgAddressSelect = s.prgAddressSelect;
-    this.chrAddressSelect = s.chrAddressSelect;
-    this.pageNumber = s.pageNumber;
-    this.irqCounter = s.irqCounter;
-    this.irqLatchValue = s.irqLatchValue;
-    this.irqEnable = s.irqEnable;
-    this.prgAddressChanged = s.prgAddressChanged;
+  parseSavestate(table) {
+    super.parseSavestate(table);
+    ((sel, counter, latch, irq, ...banks) => {
+      this.bankSelect = sel;
+      this.irqCounter = counter;
+      this.irqLatchValue = latch;
+      this.irqEnable = irq;
+      this.banks = banks;
+    })(...new Uint8Array(table['mmc3']));
   }
 }

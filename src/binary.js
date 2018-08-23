@@ -57,10 +57,11 @@ export class BinaryReader {
     let number = 0;
     let multiplier = 1;
     let val;
-    while ((val = this.buf[this.pos++]) & 0x80) {
+    do {
+      val = this.buf[this.pos++];
       number += (val & 0x7f) * multiplier;
       multiplier *= 128;
-    }
+    } while (val & 0x80);
     return number;
   }
 
@@ -78,11 +79,14 @@ export class BinaryReader {
   // fills a typed array with the next `array.length` bytes.
   readIntoArray(array, offset = 0, length = array.length - offset) {
     let a = array;
-    if (a instanceof ArrayBuffer) a = new Uint8Array(a);
-    offset *= array.BYTES_PER_ELEMENT;
-    length *= array.BYTES_PER_ELEMENT;
+    if (a instanceof ArrayBuffer) {
+      a = new Uint8Array(a);
+      length = a.length;
+    }
+    offset *= a.BYTES_PER_ELEMENT;
+    length *= a.BYTES_PER_ELEMENT;
     if (!a instanceof Uint8Array) {
-      a = new Uint8Array(array.buffer, array.byteOffset, array,byteLength);
+      a = new Uint8Array(a.buffer, a.byteOffset, a,byteLength);
     }
     a.set(this.buf.subarray(this.pos, this.pos + length), offset);
     this.pos += length;
@@ -113,14 +117,9 @@ export class BinaryReader {
 
   readStringLengthPrefixed(bytes = 0) {
     const length = this.readLittleEndian(bytes);
-    for (let i = this.pos; i < this.buf.length; i++) {
-      if (!this.buf[i]) {
-        const str = UTF8_DECODER.decode(this.buf.subarray(this.pos, i));
-        this.pos = i + 1;
-        return str;
-      }
-    }
-    throw new Error('null termination not found');
+    const str = UTF8_DECODER.decode(this.buf.subarray(this.pos, this.pos + length));
+    this.pos += length;
+    return str;
   }
 
   readStringFixedLength(length) {
@@ -136,7 +135,7 @@ export class BinaryReader {
   //   * alternate length-prefixed keys, length-prefixed arrays
   // Values are returned as ArrayBuffers, so a species must be
   // specifically assigned.
-  readTable(handlers = {}) {
+  readTable(handlers = undefined) {
     const length = this.readVarint();
     const end = this.pos + length;
     let out = {};
@@ -144,7 +143,7 @@ export class BinaryReader {
       const key = this.readStringLengthPrefixed();
       const value = this.readArrayLengthPrefixed(ArrayBuffer);
       out[key] = value;
-      if (handlers[key]) handlers[key](value);
+      if (handlers && handlers[key]) handlers[key](value);
     }
     return out;
   }
@@ -169,9 +168,10 @@ export class BinaryWriter extends BinaryReader {
     if (size >= this.buf.length) {
       let newSize = this.buf.length * 2;
       while (newSize < size) newSize *= 2;
+      const newBuf = new Uint8Array(newSize);
+      newBuf.set(this.buf);
+      this.buf = newBuf;
     }
-    const newBuf = new Uint8Array(newSize);
-    newBuf.set(this.buf);
     if (size > this.size) this.size = size;
   }
 
@@ -226,8 +226,8 @@ export class BinaryWriter extends BinaryReader {
       this.buf.set(arr, this.pos);
       this.pos += arr.length;
     } else {
-      for (let i = 0; i < bytes.length; i++) {
-        this.buf[this.pos++] = bytes[i];
+      for (let i = 0; i < arr.length; i++) {
+        this.buf[this.pos++] = arr[i];
       }
     }
     return this;
@@ -268,9 +268,9 @@ export class BinaryWriter extends BinaryReader {
 
   writeStringFixedLength(s, length = 0) {
     const encoded = UTF8_ENCODER.encode(s);
-    if (!length) length = enoded.length;
+    if (!length) length = encoded.length;
     if (encoded.length > length) throw new Error('string too long');
-    this.ensireSize_(this.pos + length);
+    this.ensureSize_(this.pos + length);
     this.buf.set(encoded, this.pos);
     this.buf.fill(0, this.pos + encoded.length, this.pos + length);
     this.pos += length;
@@ -294,7 +294,7 @@ export class BinaryWriter extends BinaryReader {
   }
 
   toArrayBuffer() {
-    return this.buffer.slice(0, this.size).buffer;
+    return this.buf.slice(0, this.size).buffer;
   }
 }
 

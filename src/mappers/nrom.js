@@ -1,4 +1,5 @@
 import * as utils from '../utils.js';
+import {BinaryWriter, BinaryReader, unpack} from '../binary.js';
 
 const countBits = (mask) => {
   let count = 0;
@@ -325,11 +326,29 @@ export class NROM {
     this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
   }
 
+  // Effectively makes repeated calls to loadPrgPage
+  loadPrgPages(...pages) {
+    for (const [address, bank, size] of pages) {
+      this.prgRomSwitcher.swap(address & 0x7fff, bank, size);
+    }
+    this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
+  }
+
   // Loads a page of CHR ROM
   loadChrPage(address, bank, size) {
     if (this.nes.ppu.usingChrRam) return; // do nothing
     this.nes.ppu.triggerRendering();
     this.chrRomSwitcher.swap(address, bank, size);
+    this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
+  }
+
+  // Effectively makes multiple calls to loadChrPage
+  loadChrPages(...pages) {
+    if (this.nes.ppu.usingChrRam) return; // do nothing
+    this.nes.ppu.triggerRendering();
+    for (const [address, bank, size] of pages) {
+      this.chrRomSwitcher.swap(address, bank, size);
+    }
     this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
   }
 
@@ -359,28 +378,44 @@ export class NROM {
     return (bank << 13) | (addr & 0x1fff);
   }
 
-  toJSON() {
-    return {
-      joy1StrobeState: this.joy1StrobeState,
-      joy2StrobeState: this.joy2StrobeState,
-      joypadLastWrite: this.joypadLastWrite,
-      prgRam: Array.from(this.prgRam),
-      prg: this.prgRomSwitcher.snapshot(), //this.serializeBanks(this.cpuBanks),
-      chr: this.chrRomSwitcher ?
-          this.chrRomSwitcher.snapshot() : Array.from(this.chrRam),
-    };
+  writeSavestate() {
+    const table = {};
+    this.buildSavestate(table);
+    return new BinaryWriter().writeTable(table).toArrayBuffer();
   }
 
-  fromJSON(s) {
-    this.joy1StrobeState = s.joy1StrobeState;
-    this.joy2StrobeState = s.joy2StrobeState;
-    this.joypadLastWrite = s.joypadLastWrite;
-    this.prgRam = Uint8Array.from(s.prgRam);
-    this.prgRomSwitcher.restore(s.prg);
+  restoreSavestate(state) {
+    this.parseSavestate(new BinaryReader(state).readTable());
+  }
+
+  buildSavestate(table) {
+    table['joy'] = Uint8Array.of(
+        this.joy1StrobeState,
+        this.joy2StrobeState,
+        this.joypadLastWrite);
+    if (this.prgRam) table['pram'] = this.prgRam;
+    if (this.chrRam) table['cram'] = this.chrRam;
+    if (this.prgRomSwitcher) {
+      table['prom'] = Uint8Array.from(this.prgRomSwitcher.snapshot());
+    }
     if (this.chrRomSwitcher) {
-      this.chrRomSwitcher.restore(s.chr);
-    } else {
-      this.chrRam = Uint16Array.from(s.chr);
+      table['crom'] = Uint8Array.from(this.chrRomSwitcher.snapshot());
+    }
+    return table;
+  }
+
+  parseSavestate(table) {
+    const joy = Uint8Array.from(table['joy']);
+    [this.joy1StrobeState, this.joy2StrobeState, this.joypadLastWrite] = joy;
+    if ('pram' in table) this.prgRam.set(new Uint8Array(table['pram']));
+    if ('cram' in table) this.chrRam.set(new Uint8Array(table['cram']));
+    if ('prom' in table) {
+      this.prgRomSwitcher.restore(table['prom']);
+      this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
+    }
+    if ('crom' in table) {
+      this.chrRomSwitcher.restore(table['crom']);
+      this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
     }
   }
 }

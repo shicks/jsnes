@@ -218,10 +218,10 @@ class Main {
   }
 }
 
-let snapshot;
+window.snapshot;
 window.main = new Main(document.getElementById('screen'));
-main.saveSnapshot = () => {snapshot = nes.cpu.snapshot();}; // q
-main.loadSnapshot = () => {nes.cpu.restore(snapshot);}; // w
+main.saveSnapshot = () => {window.snapshot = nes.writeSavestate();}; // q
+main.loadSnapshot = () => {nes.restoreSavestate(window.snapshot);}; // w
 
 // TODO - save snapshots to local storage
 //   - consider also storing a screenshot along with?

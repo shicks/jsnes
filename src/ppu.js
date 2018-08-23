@@ -1,5 +1,6 @@
 import * as utils from './utils.js';
 import {Debug} from './debug.js';
+import {BinaryReader, BinaryWriter, unpack} from './binary.js';
 
 // Status flags:
 const STATUS_VRAMWRITE = 0x10;

@@ -44,7 +44,8 @@ CPU.prototype = {
     const x = this.REG_X;
     const y = this.REG_Y;
     const sp = this.REG_SP & 0xff;
-    const f = this.getStatus()
+    const f = this.getStatus();
+    const irq = this.irq;
 
     return new BinaryWriter()
         .writeTable({
