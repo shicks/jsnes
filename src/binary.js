@@ -1,3 +1,9 @@
+// Key for a function to return an ArrayBuffer.
+// BinaryWriter will look for this.
+export const serialize = Symbol('serializable');
+
+export const deserialize = Symbol('deserialize');
+
 export class BinaryReader {
   constructor(buf) {
     let offset = undefined;
@@ -130,6 +136,14 @@ export class BinaryReader {
     return str;
   }
 
+  readStringFromRemainingBytes() {
+    return this.readStringFixedLength(this.bytesRemaining());
+  }
+
+  bytesRemaining() {
+    return this.buf.length - this.pos;
+  }
+
   // We store tables as follows (all numbers are varints):
   //   * total length (excluding the length)
   //   * alternate length-prefixed keys, length-prefixed arrays
@@ -143,7 +157,7 @@ export class BinaryReader {
       const key = this.readStringLengthPrefixed();
       const value = this.readArrayLengthPrefixed(ArrayBuffer);
       out[key] = value;
-      if (handlers && handlers[key]) handlers[key](value);
+      if (handlers && handlers[key]) handlers[key](new BinaryReader(value));
     }
     return out;
   }
@@ -281,14 +295,16 @@ export class BinaryWriter extends BinaryReader {
   writeTable(table) {
     const w = new BinaryWriter();
     for (const key in table) {
+      w.writeStringLengthPrefixed(key)
       if (!table.hasOwnProperty(key)) continue;
       const array = table[key];
       if (typeof array == 'string') array = UTF8_ENCODE(array);
-      if (!(array instanceof ArrayBuffer ||
-            array.buffer instanceof ArrayBuffer)) {
-        throw new Error(`Not an array buffer: ${key} => ${array}`);
+      if (array instanceof BinaryWriter) array = array.toArrayBuffer();
+      if (array instanceof ArrayBuffer || array.buffer instanceof ArrayBuffer) {
+        w.writeArrayLengthPrefixed(array);
+      } else {
+        throw new Error(`Bad table value: ${key} => ${array}`);
       }
-      w.writeStringLengthPrefixed(key).writeArrayLengthPrefixed(array);
     }
     return this.writeArrayLengthPrefixed(w.toArrayBuffer());
   }
@@ -319,8 +335,3 @@ export class BinaryWriter extends BinaryReader {
 
 const UTF8_ENCODER = new TextEncoder('utf-8');
 const UTF8_DECODER = new TextDecoder('utf-8');
-
-export const unpack = (type, f) => {
-  if (type == String) return (b) => f(UTF8_DECODER.decode(b));
-  return (b) => f(...new type(b));
-}

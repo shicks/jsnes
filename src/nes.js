@@ -260,12 +260,12 @@ export class NES {
     new BinaryReader(buffer)
         .expectString('NES-STA\x1a', 'Not a valid savestate')
         .readTable({
-          'cpu': (value) => this.cpu.restoreSavestate(value),
-          'ppu': (value) => this.ppu.restoreSavestate(value),
-          'mmap': (value) => this.mmap.restoreSavestate(value),
-          'partial': unpack(Uint16Array, (cycles) => {
-            this.breakpointCycles = cycles;
-          }),
+          'cpu': (r) => this.cpu.restoreSavestate(r),
+          'ppu': (r) => this.ppu.restoreSavestate(r),
+          'mmap': (r) => this.mmap.restoreSavestate(r),
+          'partial': r => {
+            this.breakpointCycles = r.readWord();
+          },
         });
     // TODO - loadROM(this.romData) or s.romData?  reloadROM()?
   }

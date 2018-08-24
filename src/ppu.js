@@ -1,6 +1,6 @@
 import * as utils from './utils.js';
 import {Debug} from './debug.js';
-import {BinaryReader, BinaryWriter, unpack} from './binary.js';
+import {BinaryReader, BinaryWriter} from './binary.js';
 
 // Status flags:
 const STATUS_VRAMWRITE = 0x10;
@@ -1160,25 +1160,58 @@ PPU.prototype = {
   },
 
   writeSavestate() {
-    const nt = new Uint8Array(0x1000);
+    let ntSize = 0x400;
+    if (this.nametable1.find(x => x)) ntSize = 0x800;
+    if (this.nametable2.find(x => x)) ntSize = 0xc00;
+    if (this.nametable3.find(x => x)) ntSize = 0x1000;
+    const nt = new Uint8Array(ntSize);
     nt.set(this.nametable0, 0x000);
-    nt.set(this.nametable1, 0x400);
-    nt.set(this.nametable2, 0x800);
-    nt.set(this.nametable3, 0xc00);
+    if (ntSize > 0x400) nt.set(this.nametable1, 0x400);
+    if (ntSize > 0x800) nt.set(this.nametable2, 0x800);
+    if (ntSize > 0xc00) nt.set(this.nametable3, 0xc00);
     this.cntsToAddress();
     this.regsToAddress();
+
+    w.writeSection('mem', new BinaryWriter()
+        .writeArray(nt)
+        .writeArray(this.spriteRam)
+        .writeArray(this.paletteRam));
+    w.writeSection('reg', new BinaryWriter()
+                   .writeWord(this.vramAddress)
+                   .writeWord(this.vramTmpAddress)
+                   .writeByte(this.firstWrite ? 0 : 1)
+                   .writeByte(this.FH));
+    w.writeSection('io', Uint8Array.of(
+                       this.vramBufferedReadValue,
+                       this.sramAddress,
+                       this.status,
+                       this.readPpuCtrl(),
+                       this.readPpuMask(),
+                       this.currentMirroring));
+
+                   
+                   
+
+    });
+
+    const empty = new Uint8Array(0);
+    const ntCount =
+        this.nametable2.find(x => x) ? 4 : this.nametable1.find(x => x) ? 2 : 1;
     const table = {
       // pattern table RAM/banking is handled by MMAP
-      'nt': nt,
-      'spr': this.spriteRam,
-      'pal': this.paletteRam,
-      'reg': Uint8Array.of(
-          this.vramAddress & 0xff,    // v
-          this.vramAddress >>> 8,
-          this.vramTmpAddress & 0xff, // t
-          this.vramTmpAddress >>> 8,
-          this.firstWrite ? 0 : 1,    // w
-          this.regFH),                // x
+      'mem': new BinaryWriter()
+          .writeByte(ntCount)
+          .writeArray(this.nametable0)
+          .writeArray(ntCount > 1 ? this.nametable1 : empty)
+          .writeArray(ntCount > 2 ? this.nametable2 : empty)
+          .writeArray(ntCount > 3 ? this.nametable3 : empty)
+          .writeArray(this.spriteRam)
+          .writeArray(this.paletteRam),
+      'reg': new BinaryWriter()
+          .writeWord(this.vramAddress)        // v
+          .writeWord(this.vramTmpAddress)     // t
+          .writeByte(this.firstWrite ? 0 : 1) // w
+          .writeByte(this.regFH),             // x
       'io': Uint8Array.of(
           this.vramBufferedReadValue,
           this.sramAddress,
@@ -1192,23 +1225,19 @@ PPU.prototype = {
     // there's quite a bit more state to record.
     if (this.scanline > 0) {
       table['partial'] = new BinaryWriter()
-          .writeTable({
-            'data': Uint16Array.of(
-                this.hitSpr0,
-                this.spr0HitX,
-                this.spr0HitY,
-                this.curX,
-                this.scanline,
-                this.lastRenderedScanline,
-                this.requestEndFrame,
-                this.dummyCycleToggle,
-                this.nmiCounter,
-                this.scanlineAlreadyRendered),
-            'buf': this.buffer,
-            'bg': this.bgbuffer,
-            'pix': this.pixrendered,
-          })
-          .toArrayBuffer();
+          .writeVarint(this.hitSpr0)
+          .writeVarint(this.spr0HitX),
+          .writeVarint(this.spr0HitY),
+          .writeVarint(this.curX),
+          .writeVarint(this.scanline),
+          .writeVarint(this.lastRenderedScanline),
+          .writeVarint(this.requestEndFrame),
+          .writeVarint(this.dummyCycleToggle),
+          .writeVarint(this.nmiCounter),
+          .writeVarint(this.scanlineAlreadyRendered)
+          .writeArray(this.buffer),
+          .writeArray(this.bgbuffer),
+          .writeArray(this.pixrendered);
     }
     return new BinaryWriter()
         .writeTable(table)
@@ -1218,48 +1247,47 @@ PPU.prototype = {
   restoreSavestate(buffer) {
     let midrender = false;
     new BinaryReader(buffer).readTable({
-      'nt': (nt) => {
-        this.nametable0.set(new Uint8Array(nt, 0x000, 0x400));
-        this.nametable1.set(new Uint8Array(nt, 0x400, 0x400));
-        this.nametable2.set(new Uint8Array(nt, 0x800, 0x400));
-        this.nametable3.set(new Uint8Array(nt, 0xc00, 0x400));
+      'mem': (r) => {
+        const ntCount = r.readByte();
+        r.readIntoArray(this.nametable0);
+        if (ntCount > 1) r.readIntoArray(this.nametable1);
+        if (ntCount > 2) r.readIntoArray(this.nametable2);
+        if (ntCount > 3) r.readIntoArray(this.nametable3);
+        r.readIntoArray(this.spriteRam);
+        r.readIntoArray(this,paletteRam);
       },
-      'spr': (mem) => this.spriteRam.set(new Uint8Array(mem)),
-      'pal': (mem) => this.paletteRam.set(new Uint8Array(mem)),
-      'reg': unpack(Uint8Array, (vlo, vhi, tlo, thi, w, x) => {
-        this.vramAddress = vlo | vhi << 8;
-        this.vramTmpAddress = tlo | thi << 8;
-        this.firstWrite = !w;
-        this.regFH = x;
-      }),
-      'io': unpack(Uint8Array, (buf, sram, sts, ctl, mask, mir) => {
-        this.vramBufferedReadValue = buf;
-        this.sramAddress = sram;
-        this.status = sts;
-        this.writePpuCtrl(ctl);
-        this.writePpuMask(mask);
-        this.setMirroring(mir);
-      }),
-      'partial': (value) => {
+      'reg': (r) => {
+        this.vramAddress = r.readWord();
+        this.vramTmpAddress = r.readWord();
+        this.firstWrite = !r.readByte(w);
+        this.regFH = r.readByte(x);
+      },
+      'io': (r) => {
+        this.vramBufferedReadValue = r.readByte();
+        this.sramAddress = r.readByte();
+        this.status = r.readByte();
+        this.writePpuCtrl(r.readByte());
+        this.writePpuMask(r.readByte());
+        this.setMirroring(r.readByte());
+      },
+      'meta': (r) => {
+        this.frames = r.readVarint();
+      },
+      'partial': (r) => {
         midrender = true;
-        new BinaryReader(value).readTable({
-          'data': unpack(
-              Uint16Array, (h, hx, hy, x, y, last, end, dummy, nmi, rnd) => {
-                this.hitSpr0 = h;
-                this.spr0HitX = hx;
-                this.spr0HitY = hy;
-                this.curX = x;
-                this.scanline = y;
-                this.lastRenderedScanline = last;
-                this.requestEndFrame = end;
-                this.dummyCycleToggle = dummy;
-                this.nmiCounter = nmi;
-                this.scanlineAlreadyRendered = rnd;
-              }),
-          'buf': (value) => this.buffer.set(new Uint32Array(value)),
-          'bg': (value) => this.bgbuffer.set(new Uint32Array(value)),
-          'pix': (value) => this.pixrendered.set(new Uint16Array(value)),
-        });
+        this.hitSpr0 = r.readVarint();
+        this.spr0HitX = r.readVarint();
+        this.spr0HitY = r.readVarint();
+        this.curX = r.readVarint();
+        this.scanline = r.readVarint();
+        this.lastRenderedScanline = r.readVarint();
+        this.requestEndFrame = r.readVarint();
+        this.dummyCycleToggle = r.readVarint();
+        this.nmiCounter = r.readVarint();
+        this.scanlineAlreadyRendered = r.readVarint();
+        r.readIntoArray(this.buffer);
+        r.readIntoArray(this.bgbuffer);
+        r.readIntoArray(this.pixrendered);
       },
     });
     if (!midrender) {
