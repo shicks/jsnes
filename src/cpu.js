@@ -1,6 +1,6 @@
  import * as utils from './utils.js';
 import {Debug} from './debug.js';
-import {BinaryReader, BinaryWriter, unpack} from './binary.js';
+import {Savestate} from './wire.js';
 import {opdata} from './opdata.js';
 
 export function CPU(nes) {
@@ -40,41 +40,32 @@ CPU.prototype = {
   IRQ_RESET: 3,
 
   writeSavestate: function() {
-    const a = this.REG_ACC;
-    const x = this.REG_X;
-    const y = this.REG_Y;
-    const sp = this.REG_SP & 0xff;
-    const f = this.getStatus();
-    const irq = this.irq;
-
-    return new BinaryWriter()
-        .writeTable({
-          'ram': this.ram,
-          'reg1': Uint8Array.of(a, x, y, sp, f, irq),
-          'reg2': Uint16Array.of(this.REG_PC, this.cyclesToHalt),
-          // TODO(sdh): worth saving crash?
-          // What about recording status/history?
-        })
-        .toArrayBuffer();
+    return Savestate.Cpu.of({
+      ram:  this.ram,
+      a:    this.REG_ACC,
+      x:    this.REG_X,
+      y:    this.REG_Y,
+      sp:   this.REG_SP,
+      f:    this.getStatus(),
+      irq:  this.irq,
+      pc:   this.REG_PC,
+      halt: this.cyclesToHalt,
+      // TODO - cyclesToHalt ?
+      // TODO(sdh): worth saving crash?
+      // What about recording status/history?
+    });
   },
 
-  restoreSavestate: function(snapshot) {
-    new BinaryReader(snapshot)
-        .readTable({
-          'ram': (value) => this.ram.set(new Uint8Array(value)),
-          'reg1': unpack(Uint8Array, (a, x, y, sp, f, irq) => {
-            this.REG_ACC = a;
-            this.REG_X = x;
-            this.REG_Y = y;
-            this.REG_SP = 0x100 | sp;
-            this.setStatus(f);
-            this.irq = irq;
-          }),
-          'reg2': unpack(Uint16Array, (pc, halt) => {
-            this.REG_PC = pc;
-            this.cyclesToHalt = halt;
-          }),
-        });
+  restoreSavestate: function(cpu) {
+    this.ram.set(new Uint8Array(cpu.ram));
+    this.REG_ACC = cpu.a;
+    this.REG_X = cpu.x;
+    this.REG_Y = cpu.y;
+    this.REG_SP = cpu.sp;
+    this.setStatus(cpu.f);
+    this.irq = cpu.irq;
+    this.REG_PC = cpu.pc;
+    this.cyclesToHalt = cpu.halt;
   },
 
   reset: function() {

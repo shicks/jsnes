@@ -1,4 +1,5 @@
 import {NROM} from './nrom.js';
+import {Proto} from '../proto.js';
 
 const BANK_SELECT_CHR_INVERTED = 0x80;
 const BANK_SELECT_PRG_INVERTED = 0x40;
@@ -104,24 +105,30 @@ export class MMC3 extends NROM {
     }
   }
 
-  buildSavestate(table) {
-    super.buildSavestate(table);
-    table['mmc3'] = Uint8Array.of(
-        this.bankSelect,
-        this.irqCounter,
-        this.irqLatchValue,
-        this.irqEnable,
-        ...this.banks);
+  writeExtSavestate() {
+    return ExtSavestate.of({
+      bankSelect: this.bankSelect,
+      irqCounter: this.irqCounter,
+      irqLatchValue: this.irqLatchValue,
+      irqEnable: this.irqEnable,
+      banks: this.banks,
+    });
   }
 
-  parseSavestate(table) {
-    super.parseSavestate(table);
-    ((sel, counter, latch, irq, ...banks) => {
-      this.bankSelect = sel;
-      this.irqCounter = counter;
-      this.irqLatchValue = latch;
-      this.irqEnable = irq;
-      this.banks = banks;
-    })(...new Uint8Array(table['mmc3']));
+  restoreExtSavestate(ext) {
+    const mmc3 = ExtSavestate.parse(ext);
+    this.bankSelect = mmc3.bankSelect;
+    this.irqCounter = mmc3.irqCounter;
+    this.irqLatchValue = mmc3.irqLatchValue;
+    this.irqEnable = mmc3.irqEnable;
+    this.banks = mmc3.banks;
   }
 }
+
+const ExtSavestate = Proto.message({
+  bankSelect: Proto.uint32(1),
+  irqCounter: Proto.uint32(2),
+  irqLatchValue: Proto.uint32(3),
+  irqEnable: Proto.uint32(5),
+  banks: Proto.uint32(6).repeated(),
+});

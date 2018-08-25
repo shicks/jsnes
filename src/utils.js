@@ -142,7 +142,7 @@ export class RomBankSwitcher {
   }
 
   snapshot() {
-    return this.current.slice();
+    return Uint8Array.from(this.current);
   }
 
   divide(bits) {

@@ -1,4 +1,5 @@
 import {NROM} from './nrom.js';
+import {Proto} from '../proto.js';
 
 const CTRL_MIRROR_MASK       = 0b00011;
 const CTRL_MIRROR_ONE_LOWER  = 0b00000;
@@ -117,25 +118,31 @@ export class MMC1 extends NROM {
     // not yet.
   }
 
-  buildSavestate(table) {
-    super.buildSavestate(table);
-    table['mmc1'] = Uint8Array.of(
-        this.shiftRegister,
-        this.control,
-        this.chrLo,
-        this.chrHi,
-        this.prgPage);
+  writeExtSavestate() {
+    return ExtSavestate.of({
+      shiftRegister: this.shiftRegister,
+      control: this.control,
+      chrLo: this.chrLo,
+      chrHi: this.chrHi,
+      prgPage: this.prgPage,
+    });
   }
 
-  parseSavestate(table) {
-    super.parseSavestate(table);
-    ((shift, ctl, chrlo, chrhi, prg) => {
-      this.shiftRegister = shift;
-      this.control = ctl;
-      this.chrLo = chrlo;
-      this.chrHi = chrhi;
-      this.prgPage = prg;
-    })(...new Uint8Array(table['mmc1']));
+  restoreExtSavestate(ext) {
+    const mmc1 = ExtSavestate.parse(ext);
+    this.shiftRegister = mmc1.shiftRegister;
+    this.control = mmc1.control;
+    this.chrLo = mmc1.chrLo;
+    this.chrHi = mmc1.chrHi;
+    this.prgPage = mmc1.prgPage
     this.update();
   }
 }
+
+const ExtSavestate = Proto.message({
+  shiftRegister: Proto.uint32(1),
+  control: Proto.uint32(2),
+  chrLo: Proto.uint32(3),
+  chrHi: Proto.uint32(4),
+  prgPage: Proto.uint32(5),
+});

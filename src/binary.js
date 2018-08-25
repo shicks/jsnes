@@ -1,15 +1,9 @@
-// Key for a function to return an ArrayBuffer.
-// BinaryWriter will look for this.
-export const serialize = Symbol('serializable');
-
-export const deserialize = Symbol('deserialize');
-
 export class BinaryReader {
   constructor(buf) {
     let offset = undefined;
     let length = undefined;
     if (!(buf instanceof Uint8Array)) {
-      if (!(buf instanceof ArrayBuffer) && buf.buffer instanceof ArrayBuffer) {
+      if (buf && !(buf instanceof ArrayBuffer) && buf.buffer instanceof ArrayBuffer) {
         offset = buf.byteOffset;
         length = buf.byteLength;
         buf = buf.buffer;
@@ -314,24 +308,6 @@ export class BinaryWriter extends BinaryReader {
   }
 }
 
-// export const trimToUtf8Length = (string, length) => {
-//   // Does this return a string or a Uint8Array?!?
-//   const encoded = UTF8_ENCODER.encode(s);
-//   let len = encoded.length;
-//   if (len < 
-//     if (len > length) {
-//       let p = len - 1;
-//       while (p && (encoded[p] & 0x80)) {
-//         if (!(encoded[p] & 0x40)) {
-//           p--;
-//           continue;
-//         }
-//         // initial byte
-//       }
-//       while (encoded[len - 1] & 0x80) {
-//       }
-//     }
-// }
-
 const UTF8_ENCODER = new TextEncoder('utf-8');
 const UTF8_DECODER = new TextDecoder('utf-8');
+

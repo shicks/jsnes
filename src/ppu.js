@@ -1,6 +1,7 @@
 import * as utils from './utils.js';
 import {Debug} from './debug.js';
 import {BinaryReader, BinaryWriter} from './binary.js';
+import {Savestate} from './wire.js';
 
 // Status flags:
 const STATUS_VRAMWRITE = 0x10;
@@ -1160,137 +1161,102 @@ PPU.prototype = {
   },
 
   writeSavestate() {
-    let ntSize = 0x400;
-    if (this.nametable1.find(x => x)) ntSize = 0x800;
-    if (this.nametable2.find(x => x)) ntSize = 0xc00;
-    if (this.nametable3.find(x => x)) ntSize = 0x1000;
-    const nt = new Uint8Array(ntSize);
-    nt.set(this.nametable0, 0x000);
-    if (ntSize > 0x400) nt.set(this.nametable1, 0x400);
-    if (ntSize > 0x800) nt.set(this.nametable2, 0x800);
-    if (ntSize > 0xc00) nt.set(this.nametable3, 0xc00);
     this.cntsToAddress();
     this.regsToAddress();
-
-    w.writeSection('mem', new BinaryWriter()
-        .writeArray(nt)
-        .writeArray(this.spriteRam)
-        .writeArray(this.paletteRam));
-    w.writeSection('reg', new BinaryWriter()
-                   .writeWord(this.vramAddress)
-                   .writeWord(this.vramTmpAddress)
-                   .writeByte(this.firstWrite ? 0 : 1)
-                   .writeByte(this.FH));
-    w.writeSection('io', Uint8Array.of(
-                       this.vramBufferedReadValue,
-                       this.sramAddress,
-                       this.status,
-                       this.readPpuCtrl(),
-                       this.readPpuMask(),
-                       this.currentMirroring));
-
-                   
-                   
-
-    });
-
-    const empty = new Uint8Array(0);
-    const ntCount =
-        this.nametable2.find(x => x) ? 4 : this.nametable1.find(x => x) ? 2 : 1;
-    const table = {
-      // pattern table RAM/banking is handled by MMAP
-      'mem': new BinaryWriter()
-          .writeByte(ntCount)
-          .writeArray(this.nametable0)
-          .writeArray(ntCount > 1 ? this.nametable1 : empty)
-          .writeArray(ntCount > 2 ? this.nametable2 : empty)
-          .writeArray(ntCount > 3 ? this.nametable3 : empty)
-          .writeArray(this.spriteRam)
-          .writeArray(this.paletteRam),
-      'reg': new BinaryWriter()
-          .writeWord(this.vramAddress)        // v
-          .writeWord(this.vramTmpAddress)     // t
-          .writeByte(this.firstWrite ? 0 : 1) // w
-          .writeByte(this.regFH),             // x
-      'io': Uint8Array.of(
-          this.vramBufferedReadValue,
-          this.sramAddress,
-          this.status,
-          this.readPpuCtrl(),
-          this.readPpuMask(),
-          this.currentMirroring),
+    const data = {
+      mem: {
+        spriteRam:  this.spriteRam,
+        paletteRam: this.paletteRam,
+      },
+      reg: {
+        v: this.vramAddress,
+        t: this.vramTmpAddress,
+        w: this.firstWrite ? 0 : 1,
+        x: this.regFH,
+      },
+      io: {
+        bufferedRead: this.vramBufferedReadValue,
+        sramAddress: this.sramAddress,
+        status: this.status,
+        ppuCtrl: this.readPpuCtrl(),
+        ppuMask: this.readPpuMask(),
+        mirroring: this.currentMirroring,
+      },
+      meta: {
+        frame: this.frame,
+      },
     };
+    // Nametables are only written if they're non-empty.
+    if (this.nametable0.find(x => x)) data.mem.nametable0 = this.nametable0;
+    if (this.nametable1.find(x => x)) data.mem.nametable1 = this.nametable1;
+    if (this.nametable2.find(x => x)) data.mem.nametable2 = this.nametable2;
+    if (this.nametable3.find(x => x)) data.mem.nametable3 = this.nametable3;
 
     // NOTE: if we're in the middle of rendering a frame, then
     // there's quite a bit more state to record.
     if (this.scanline > 0) {
-      table['partial'] = new BinaryWriter()
-          .writeVarint(this.hitSpr0)
-          .writeVarint(this.spr0HitX),
-          .writeVarint(this.spr0HitY),
-          .writeVarint(this.curX),
-          .writeVarint(this.scanline),
-          .writeVarint(this.lastRenderedScanline),
-          .writeVarint(this.requestEndFrame),
-          .writeVarint(this.dummyCycleToggle),
-          .writeVarint(this.nmiCounter),
-          .writeVarint(this.scanlineAlreadyRendered)
-          .writeArray(this.buffer),
-          .writeArray(this.bgbuffer),
-          .writeArray(this.pixrendered);
+      data.partial = {
+        hitSpr0: this.hitSpr0,
+        spr0HitX: this.spr0HitX,
+        spr0HitY: this.spr0HitY,
+        curX: this.curX,
+        scanline: this.scanline,
+        lastRenderedScanline: this.lastRenderedScanline,
+        requestEndFrame: this.requestEndFrame,
+        dummyCycleToggle: this.dummyCycleToggle,
+        nmiCounter: this.nmiCounter,
+        scanlineAlreadyRendered: this.scanlineAlreadyRendered,
+        buffer: this.buffer,
+        bgbuffer: this.bgbuffer,
+        pixrendered: this.pixrendered,
+      };
     }
-    return new BinaryWriter()
-        .writeTable(table)
-        .toArrayBuffer();
+    return Savestate.Ppu.of(data);
   },
 
-  restoreSavestate(buffer) {
-    let midrender = false;
-    new BinaryReader(buffer).readTable({
-      'mem': (r) => {
-        const ntCount = r.readByte();
-        r.readIntoArray(this.nametable0);
-        if (ntCount > 1) r.readIntoArray(this.nametable1);
-        if (ntCount > 2) r.readIntoArray(this.nametable2);
-        if (ntCount > 3) r.readIntoArray(this.nametable3);
-        r.readIntoArray(this.spriteRam);
-        r.readIntoArray(this,paletteRam);
-      },
-      'reg': (r) => {
-        this.vramAddress = r.readWord();
-        this.vramTmpAddress = r.readWord();
-        this.firstWrite = !r.readByte(w);
-        this.regFH = r.readByte(x);
-      },
-      'io': (r) => {
-        this.vramBufferedReadValue = r.readByte();
-        this.sramAddress = r.readByte();
-        this.status = r.readByte();
-        this.writePpuCtrl(r.readByte());
-        this.writePpuMask(r.readByte());
-        this.setMirroring(r.readByte());
-      },
-      'meta': (r) => {
-        this.frames = r.readVarint();
-      },
-      'partial': (r) => {
-        midrender = true;
-        this.hitSpr0 = r.readVarint();
-        this.spr0HitX = r.readVarint();
-        this.spr0HitY = r.readVarint();
-        this.curX = r.readVarint();
-        this.scanline = r.readVarint();
-        this.lastRenderedScanline = r.readVarint();
-        this.requestEndFrame = r.readVarint();
-        this.dummyCycleToggle = r.readVarint();
-        this.nmiCounter = r.readVarint();
-        this.scanlineAlreadyRendered = r.readVarint();
-        r.readIntoArray(this.buffer);
-        r.readIntoArray(this.bgbuffer);
-        r.readIntoArray(this.pixrendered);
-      },
-    });
-    if (!midrender) {
+  restoreSavestate(ppu) {
+    // Memory
+    this.spriteRam.set(ppu.mem.spriteRam);
+    this.paletteRam.set(ppu.mem.paletteRam);
+    this.nametable0.fill(0);
+    this.nametable1.fill(0);
+    this.nametable2.fill(0);
+    this.nametable3.fill(0);
+    if (ppu.mem.nametable0) this.nametable0.set(ppu.mem.nametable0);
+    if (ppu.mem.nametable1) this.nametable1.set(ppu.mem.nametable1);
+    if (ppu.mem.nametable2) this.nametable2.set(ppu.mem.nametable2);
+    if (ppu.mem.nametable3) this.nametable3.set(ppu.mem.nametable3);
+    // Registers
+    this.vramAddress = ppu.reg.v;
+    this.vramTmpAddress = ppu.reg.t;
+    this.firstWrite = !ppu.reg.w;
+    this.regFH = ppu.reg.x;
+    // PPU-CPU Bus
+    this.vramBufferedReadValue = ppu.io.bufferedRead;
+    this.sramAddress = ppu.io.sramAddress;
+    this.status = ppu.io.status;
+    this.writePpuCtrl(ppu.io.ppuCtrl);
+    this.writePpuMask(ppu.io.ppuMask);
+    this.setMirroring(ppu.io.mirroring);
+    // Metadata
+    if (ppu.meta && ppu.meta.frame) this.frame = ppu.meta.frame;
+
+    // Partially-rendered frames
+    if (ppu.partial) {
+      this.hitSpr0 = ppu.partial.hitSpr0;
+      this.spr0HitX = ppu.partial.spr0HitX;
+      this.spr0HitY = ppu.partial.spr0HitY;
+      this.curX = ppu.partial.xurX;
+      this.scanline = ppu.partial.scanline;
+      this.lastRenderedScanline = ppu.partial.lastRenderedScanline;
+      this.requestEndFrame = ppu.partial.requestEndFrame();
+      this.dummyCycleToggle = ppu.partial.dummyCycleToggle;
+      this.nmiCounter = ppu.partial.nmiCounter
+      this.scanlineAlreadyRendered = ppu.partial.scanlineAlreadyRendered;
+      this.buffer.set(ppu.partial.buffer);
+      this.bgbuffer.set(ppu.partial.bgbuffer);
+      this.pixrendered.set(ppu.pixrendered);
+    } else {
       // reset rendering variables?
       this.hitSpr0 = false;
       this.spr0HitX = this.spr0HitY = -1;

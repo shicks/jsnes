@@ -5,7 +5,8 @@ import {PPU} from './ppu.js';
 import {PAPU} from './papu.js';
 import {ROM} from './rom.js';
 import {Debug} from './debug.js';
-import {BinaryReader, BinaryWriter, unpack} from './binary.js';
+import {BinaryReader, BinaryWriter} from './binary.js';
+import {Savestate} from './wire.js';
 
 export class NES {
   constructor(opts) {
@@ -240,33 +241,26 @@ export class NES {
   // Header: "NES-STA\x1a"
   // Data:   a table containing {cpu, ppu, mmap} state.
   writeSavestate() {
-    const table = {
-      'cpu': this.cpu.writeSavestate(),
-      'ppu': this.ppu.writeSavestate(),
-      'mmap': this.mmap.writeSavestate(),
+    const data = {
+      cpu: this.cpu.writeSavestate(),
+      ppu: this.ppu.writeSavestate(),
+      mmap: this.mmap.writeSavestate(),
     };
     // TODO - what about this.romData?
     if (this.breakpointCycles != null) {
-      table['partial'] = Uint16Array.of(this.breakpointCycles);
+      data.partial = {breakpointCycles: this.breakpointCycles};
     }
-    return new BinaryWriter()
-        .writeStringFixedLength('NES-STA\x1a')
-        .writeTable(table)
-        .toArrayBuffer();
+    return Savestate.of(data).serialize('NES-STA\x1a');
   }
 
   restoreSavestate(buffer) {
-    this.breakpointCycles = null;
-    new BinaryReader(buffer)
-        .expectString('NES-STA\x1a', 'Not a valid savestate')
-        .readTable({
-          'cpu': (r) => this.cpu.restoreSavestate(r),
-          'ppu': (r) => this.ppu.restoreSavestate(r),
-          'mmap': (r) => this.mmap.restoreSavestate(r),
-          'partial': r => {
-            this.breakpointCycles = r.readWord();
-          },
-        });
+    const savestate = Savestate.parse(buffer, 'NES-STA\x1a');
+    this.cpu.restoreSavestate(savestate.cpu);
+    this.ppu.restoreSavestate(savestate.ppu);
+    this.mmap.restoreSavestate(savestate.mmap);
+    this.breakpointCycles =
+      savestate.partial && savestate.partial.breakpointCycles != null ?
+        savestate.partial.breakpointCycles : null;
     // TODO - loadROM(this.romData) or s.romData?  reloadROM()?
   }
 }

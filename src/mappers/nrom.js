@@ -1,5 +1,5 @@
 import * as utils from '../utils.js';
-import {BinaryWriter, BinaryReader, unpack} from '../binary.js';
+import {Savestate} from '../wire.js';
 
 const countBits = (mask) => {
   let count = 0;
@@ -378,44 +378,38 @@ export class NROM {
     return (bank << 13) | (addr & 0x1fff);
   }
 
+  writeExtSavestate() {}
+
   writeSavestate() {
-    const table = {};
-    this.buildSavestate(table);
-    return new BinaryWriter().writeTable(table).toArrayBuffer();
+    return Savestate.Mmap.of(Object.assign({
+      joy1StrobeState: this.joy1StrobeState,
+      joy2StrobeState: this.joy2StrobeState,
+      joypadLastWrite: this.joypadLastWrite,
+      prgRam: this.prgRam,
+      chrRam: this.chrRam,
+      prgRom: this.prgRomSwitcher && this.prgRomSwitcher.snapshot(),
+      chrRom: this.chrRomSwitcher && this.chrRomSwitcher.snapshot(),
+    }, this.writeExtSavestate()));
   }
 
-  restoreSavestate(state) {
-    this.parseSavestate(new BinaryReader(state).readTable());
-  }
+  restoreExtSavestate(ext) {}
 
-  buildSavestate(table) {
-    table['joy'] = Uint8Array.of(
-        this.joy1StrobeState,
-        this.joy2StrobeState,
-        this.joypadLastWrite);
-    if (this.prgRam) table['pram'] = this.prgRam;
-    if (this.chrRam) table['cram'] = this.chrRam;
-    if (this.prgRomSwitcher) {
-      table['prom'] = Uint8Array.from(this.prgRomSwitcher.snapshot());
-    }
-    if (this.chrRomSwitcher) {
-      table['crom'] = Uint8Array.from(this.chrRomSwitcher.snapshot());
-    }
-    return table;
-  }
-
-  parseSavestate(table) {
-    const joy = Uint8Array.from(table['joy']);
-    [this.joy1StrobeState, this.joy2StrobeState, this.joypadLastWrite] = joy;
-    if ('pram' in table) this.prgRam.set(new Uint8Array(table['pram']));
-    if ('cram' in table) this.chrRam.set(new Uint8Array(table['cram']));
-    if ('prom' in table) {
-      this.prgRomSwitcher.restore(table['prom']);
+  restoreSavestate(mmap) {
+    this.joy1StrobeState = mmap.joy1StrobeState;
+    this.joy2StrobeState = mmap.joy2StrobeState;
+    this.joypadLastWrite = mmap.joypadLastWrite;
+    if (mmap.prgRam) this.prgRam.set(mmap.prgRam);
+    if (mmap.chrRam) this.chrRam.set(mmap.chrRam);
+    if (mmap.prgRom) {
+      this.prgRomSwitcher.restore(mmap.prgRom);
       this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
     }
-    if ('crom' in table) {
-      this.chrRomSwitcher.restore(table['crom']);
+    if (mmap.chrRom) {
+      this.chrRomSwitcher.restore(mmap.chrRom);
       this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
+    }
+    if (mmap.ext) {
+      restoreExtSavestate(mmap.ext);
     }
   }
 }
