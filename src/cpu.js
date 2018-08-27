@@ -1,6 +1,7 @@
  import * as utils from './utils.js';
 import {Debug} from './debug.js';
 import {Savestate} from './wire.js';
+import {Recorder} from './movie.js';
 import {opdata} from './opdata.js';
 
 export function CPU(nes) {
@@ -112,8 +113,8 @@ CPU.prototype = {
   softReset() {
     this.REG_PC = this.load16bit(0xfffc) - 1;
     // TODO - this.requestIrq(IRQ_RESET) ---> ?
-    if (this.debug && this.debug.recording) {
-      this.debug.recording.record({reset: true});
+    if (this.nes.movie instanceof Recorder) {
+      this.nes.movie.record({reset: true});
     }
   },
 

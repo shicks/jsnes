@@ -1231,6 +1231,8 @@ PPU.prototype = {
     this.vramTmpAddress = ppu.reg.t;
     this.firstWrite = !ppu.reg.w;
     this.regFH = ppu.reg.x;
+    this.cntsFromAddress();
+    this.regsFromAddress();
     // PPU-CPU Bus
     this.vramBufferedReadValue = ppu.io.bufferedRead;
     this.sramAddress = ppu.io.sramAddress;

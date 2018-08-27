@@ -26,8 +26,9 @@ const BLOBS = 'Blobs';
 
 class Picker extends Component {
   // Resolves to an object: {name, size?, data?}.
-  constructor(resolve, reject, files, text = undefined) {
+  constructor(fs, resolve, reject, files, text = undefined) {
     super();
+    this.fs = fs;
     this.element.classList.add('file-picker');
     this.reject = reject;
     // TODO - could get fancier with filter, sort, folders, etc.
@@ -36,6 +37,9 @@ class Picker extends Component {
       const line = child(this.element, 'div', 'file');
       line.textContent = `${size.toString(10).padStart(9)} ${name}`;
       line.dataset.name = name;
+      const del = child(line, 'span', 'delete');
+      del.textContent = 'x';
+      del.dataset.name = name;
     }
     const upload = child(this.element, 'input');
     upload.type = 'file';
@@ -59,7 +63,11 @@ class Picker extends Component {
       resolve({name, data: new Uint8Array(0)});
     });
     this.element.addEventListener('click', (e) => {
-      if (e.target.dataset.name) {
+      if (!e.target.dataset.name) return;
+      if (e.target.classList.contains('delete')) {
+        e.target.parentElement.remove();
+        this.fs.delete(e.target.dataset.name);
+      } else {
         resolve({name: e.target.dataset.name});
         super.remove();
       }
@@ -102,7 +110,7 @@ export class FileSystem {
   async pick(text = undefined) {
     const files = await this.list();
     return new Promise((ok, fail) => {
-      new Picker(ok, fail, files, text);
+      new Picker(this, ok, fail, files, text);
     }).then((file) => {
       if (file.data) {
         // uploaded - store it

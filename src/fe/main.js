@@ -1,11 +1,12 @@
 import {Controller} from '../controller.js';
 import {NES} from '../nes.js';
+import {Playback, Recorder, Movie} from '../movie.js';
 import {Screen} from './screen.js';
 import {Speakers} from './speakers.js';
 import {GamepadController} from './gamepadcontroller.js';
 import {KeyboardController} from './keyboardcontroller.js';
 import {FrameTimer} from './frametimer.js';
-import {ChrRomViewer, PatternTableViewer, Trace, WatchPanel, WatchPage, RecordingPane, NametableTextViewer} from './debugger.js';
+import * as debug from './debugger.js';
 import {Component} from './component.js';
 import {FileSystem} from './fs.js';
 import {Menu} from './menu.js';
@@ -61,6 +62,12 @@ class Main {
       onBreak: (midFrame) => {
         this.stop();
         if (midFrame && this.nes.ppu.scanline > 0) this.partialRender();
+      },
+      getScreenshot: () => {
+        const bin = atob(screen.toDataURL().replace(/^[^,]*,/, ''));
+        return Uint8Array.from(bin.split('').map(c => c.charCodeAt(0)));
+        // inverse: 'data:image/png;base64,' +
+        //          btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
       },
     });
 
@@ -210,18 +217,23 @@ class Main {
   // }
 
   patternTable() {
-    return new PatternTableViewer(this.nes);
+    return new debug.PatternTableViewer(this.nes);
   }
 
   chrRom(...pages) {
-    return new ChrRomViewer(this.nes, pages);
+    return new debug.ChrRomViewer(this.nes, pages);
   }
 }
 
 window.snapshot;
 window.main = new Main(document.getElementById('screen'));
 main.saveSnapshot = () => {window.snapshot = nes.writeSavestate();}; // q
-main.loadSnapshot = () => {nes.restoreSavestate(window.snapshot);}; // w
+main.loadSnapshot = () => { // w
+  // main.speakers.stop();
+  //main.speakers.clear();
+  nes.restoreSavestate(window.snapshot);
+  // setTimeout(() => main.speakers.start(), window.TIME || 0);
+};
 
 // TODO - save snapshots to local storage
 //   - consider also storing a screenshot along with?
@@ -241,7 +253,7 @@ main.track = (type) => {
   main.functions[86] = () => console.log(nes.debug.coverage.candidates(type, true)); // V (List)
 };
 
-main.watch = (...addrs) => new WatchPanel(nes, ...addrs);
+main.watch = (...addrs) => new debug.WatchPanel(nes, ...addrs);
 
 const promptForNumbers = (text, callback) => {
   const numbers = prompt(text);
@@ -259,17 +271,38 @@ const promptForNumbers = (text, callback) => {
 
 new Menu('File')
     // TODO - file manager
-    .addItem('Load ROM', async () => main.load());
+    .addItem('Load ROM', () => main.load());
 new Menu('NES')
     // TODO - hard reset (need to figure out how)
     .addItem('Reset', () => main.nes.cpu.softReset());
+new Menu('Movie')
+    .addItem('Playback', async () => {
+      if (!(main.nes.movie instanceof Playback)) {
+        const file = await main.fs.pick('Select movie to play');
+        main.nes.movie =
+            new Playback(main.nes, file.data, () => main.stop());
+        main.nes.movie.start();
+      }
+      new debug.PlaybackPanel(main.nes);
+    })
+    .addItem('Record', async () => {
+      const file = await main.fs.pick('Select movie to record');
+      const movie = file.data ? Movie.parse(file.data) : undefined;
+      if (!(main.nes.movie instanceof Recorder) || movie) {
+        main.nes.movie = new Recorder(main.nes, movie);
+        //main.nes.recorder.start();
+      }
+      new debug.RecordPanel(main, file.name);
+    });
+
 new Menu('Debug')
     .addItem('Watch Page', () => promptForNumbers('Pages', pages => {
-      for (const page of pages) new WatchPage(main.nes, page);
+      for (const page of pages) new debug.WatchPage(main.nes, page);
     }))
-    .addItem('Nametable', () => new NametableTextViewer(main.nes))
-    .addItem('Pattern Table', () => new PatternTableViewer(main.nes))
+    .addItem('Nametable', () => new debug.NametableTextViewer(main.nes))
+    .addItem('Pattern Table', () => new debug.PatternTableViewer(main.nes))
     .addItem('CHR Viewer', () => promptForNumbers('Banks', banks => {
-      new ChrRomViewer(main.nes, banks);
+      new debug.ChrRomViewer(main.nes, banks);
     }))
-    .addItem('Recording', () => new RecordingPane(main));
+    .addItem('Virtual Controllers', () => new debug.ControllerPanel(main.nes));
+

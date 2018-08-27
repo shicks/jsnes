@@ -6,8 +6,10 @@ export class Component {
     this.outer = child(document.getElementById('grid'), 'div', 'component');
     this.corner = child(this.outer, 'div', 'corner');
     this.addCornerButton('x', () => this.remove());
+    this.element = child(this.outer, 'div', 'content');
+    this.closeResolver = () => {};
+    this.closePromise = new Promise(resolve => this.closeResolver = resolve);
     Component.map.set(this.outer, this);
-    this.element = child(this.outer, 'div');
   }
 
   addCornerButton(text, handler) {
@@ -16,7 +18,14 @@ export class Component {
     button.addEventListener('click', handler);
   }
 
-  remove() { this.outer.remove(); }
+  closed() {
+    return this.closePromise;
+  }
+
+  remove() {
+    this.closeResolver();
+    this.outer.remove();
+  }
 
   // Returns a string representation of this component's state, to be merged
   // into the URL fragment.

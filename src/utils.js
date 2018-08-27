@@ -155,9 +155,13 @@ export class RomBankSwitcher {
 }
 
 /** @return {!Array<number>} The new list of divided banks. */
-const seq = (n) => new Array(n).fill(0).map((_, i) => i);
+export const seq = (n) => new Array(n).fill(0).map((_, i) => i);
 const divideBanks = (banks, factor) =>
     [].concat(...banks.map(x => seq(factor).map(i => factor * x + i)));
 
 const powerOfTwo = (x) => 0x80000000 >>> Math.clz32(x);
 const log2 = (x) => 31 - Math.clz32(x);
+
+export const checkState = (cond, msg) => {
+  if (!cond) throw new Error(msg);
+}

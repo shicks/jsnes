@@ -86,8 +86,12 @@
   margin: 0 0.5em;
 }
 
-.corner+div {
+.component > .content {
   padding: 1em;
+}
+
+.corner+div {
+  position: relative;
 }
 
 .component .trace {
@@ -95,6 +99,21 @@
   display: flex;
   flex-direction: column;
 }
+
+/* .component .disable { */
+/*   position: absolute; */
+/*   left: 0; */
+/*   right: 0; */
+/*   top: 0; */
+/*   bottom: 0; */
+/*   display: none; */
+/*   background: white; */
+/*   opacity: 0.6; */
+/* } */
+
+/* .component.disabled .disable { */
+/*   display: block; */
+/* } */
 
 .watch {
   font-size: 83%;
@@ -112,7 +131,9 @@
   font-weight: bold;
 }
 
-.watchpage {
+.watchpage,
+.movie,
+.controller {
   font-size: 83%;
   white-space: pre;
   font-family: monospace;
@@ -188,4 +209,40 @@
 
 .file-picker > .file {
   border-top: 1px solid #aaa;
+}
+
+.file-picker > .file > .delete {
+  position: absolute;
+  right: 1em;
+}
+
+.controller > div {
+  margin: 3px 0;
+}
+
+.controller .toggle {
+  display: none;
+}
+
+.controller .toggle + span {
+  margin: 1px;
+}
+
+.controller .toggle:checked + span {
+  margin: 0;
+  border: 1px solid #555;
+}
+
+.controller .button {
+  margin: 2px;
+  padding: 2px
+}
+
+.controller .button.pressed {
+  margin: 1px;
+  border: 1px solid #555;
+}
+
+.controller {
+  user-select: none;
 }

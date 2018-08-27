@@ -7,15 +7,17 @@ import {ROM} from './rom.js';
 import {Debug} from './debug.js';
 import {BinaryReader, BinaryWriter} from './binary.js';
 import {Savestate} from './wire.js';
+import {Recorder, Playback} from './movie.js';
 
 export class NES {
   constructor(opts) {
     this.opts = {
-      onFrame: function() {},
+      onFrame: () => {},
       onAudioSample: null,
-      onStatusUpdate: function() {},
-      onBatteryRamWrite: function() {},
+      onStatusUpdate: () => {},
+      onBatteryRamWrite: () => {},
       onBreak: () => {},
+      getScreenshot: () => null,
 
       // FIXME: not actually used except for in PAPU
       preferredFrameRate: 60,
@@ -64,6 +66,8 @@ export class NES {
     this.fpsFrameCount = 0;
     this.frameCount = 0;
     this.romData = null;
+
+    this.movie = null; // either a recorder or a playback
   }
 
   // Resets the system
@@ -159,25 +163,24 @@ export class NES {
     }
     this.fpsFrameCount++;
     this.frameCount++;
-    if (this.debug && this.debug.recording) {
-      this.debug.recording.recordFrame();
-      this.debug.recording.playbackFrame();
+    if (this.movie instanceof Recorder) {
+      this.movie.recordFrame();
+    } else if (this.movie instanceof Playback) {
+      this.movie.playbackFrame();
     }
   }
 
   buttonDown(controller, button) {
     if (this.controllers[controller].buttonDown(button) &&
-        this.debug &&
-        this.debug.recording) {
-      this.debug.recording.record({controller, button, pressed: true});
+        this.movie instanceof Recorder) {
+      this.movie.record({controller, button, pressed: true});
     }
   }
 
   buttonUp(controller, button) {
     if (this.controllers[controller].buttonUp(button) &&
-        this.debug &&
-        this.debug.recording) {
-      this.debug.recording.record({controller, button, pressed: false});
+        this.movie instanceof Recorder) {
+      this.movie.record({controller, button, pressed: false});
     }
   }
 
@@ -245,12 +248,15 @@ export class NES {
       cpu: this.cpu.writeSavestate(),
       ppu: this.ppu.writeSavestate(),
       mmap: this.mmap.writeSavestate(),
+      screen: this.opts.getScreenshot(),
     };
     // TODO - what about this.romData?
     if (this.breakpointCycles != null) {
       data.partial = {breakpointCycles: this.breakpointCycles};
     }
-    return Savestate.of(data).serialize('NES-STA\x1a');
+    const savestate = Savestate.of(data).serialize('NES-STA\x1a');
+    if (this.movie instanceof Recorder) this.movie.keyframe(savestate);
+    return savestate;
   }
 
   restoreSavestate(buffer) {
@@ -261,6 +267,8 @@ export class NES {
     this.breakpointCycles =
       savestate.partial && savestate.partial.breakpointCycles != null ?
         savestate.partial.breakpointCycles : null;
+    this.papu.reset();
+    // TODO - if paused, update the screen with the stored screenshot???
     // TODO - loadROM(this.romData) or s.romData?  reloadROM()?
   }
 }

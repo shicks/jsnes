@@ -1,6 +1,7 @@
 // Debugging tools
 import {child, text, link, fmt} from './utils.js';
 import {Component} from './component.js';
+import {Controller} from '../controller.js';
 
 // A single watched memory location or expression.
 export class Watch {
@@ -26,7 +27,7 @@ export class Watch {
   }
 
   static ram(nes, address) {
-    return new Watch(() => nes.mmap.load(address));
+    return new Watch(() => nes.cpu.load(address));
   }
 }
 
@@ -337,68 +338,202 @@ export class ChrRomViewer extends PatternTableViewer {
 // TODO - nametable viewer?
 // TODO - sprite info viewer?
 
-export class RecordingPane extends Component {
-  constructor(main) {
+class MoviePanel extends Component {
+  constructor(nes, movie) {
     super();
-    this.fs = main.fs;
-    this.recording = main.nes.debug.recording;
-    this.element.classList.add('recordings');
-    const top = child(this.element, 'div');
-    link(top, 'open', () => this.open());
-    text(top, ' ');
-    link(top, 'save', () => this.save());
-    text(top, ' ');
-    link(top, 'reset', () => main.nes.cpu.softReset());
-    this.name = child(this.element, 'input');
-    this.name.type = 'text';
+    this.nes = nes;
+    this.movie = movie;
+    this.element.classList.add('movie');
+    // assume nes.movie is already set.
+    this.top = child(this.element, 'div');
     const middle = child(this.element, 'div');
-    this.status = child(middle, 'span');
+
+    this.status = child(this.top, 'span');
+
+    text(middle, 'Keyframes: ');
+    this.keyframeStatus = child(middle, 'span');
+    link(middle, '|<', () => this.selectKeyframe(0));
     text(middle, ' ');
-    this.position = child(middle, 'span');
-    const bottom = child(this.element, 'div');
-    link(bottom, 'play', () => this.play());
-    text(bottom, ' ');
-    link(bottom, 'record', () => this.record());
-    text(bottom, ' ');
-    link(bottom, 'stop', () => this.stop());
-  }
+    link(middle, '<', () => this.selectKeyframe(this.currentKeyframe - 1));
+    text(middle, ' ');
+    link(middle, 'o', () => this.trackingKeyframe = true);
+    text(middle, ' ');
+    link(middle, '>', () => this.selectKeyframe(this.currentKeyframe + 1));
+    text(middle, ' ');
+    link(middle, '>|', () => this.selectKeyframe(this.keyframes.length));
+    text(middle, ' ');
+    link(middle, '[seek]', () => this.seekToKeyframe());
 
-  async open() {
-    const picked = await this.fs.pick('Select movie');
-    this.name.value = picked.name;
-    this.recording.loadFile(picked.data);
+    this.keyframeSnapshot = child(this.element, 'img');
+    this.keyframeSnapshot.height = '120';
+
+    this.keyframes = this.movie.keyframes();
+    this.currentKeyframe = 0;
+    this.trackingKeyframe = true;
+    this.closed().then(() => {
+      this.movie.stop();
+      this.nes.movie = null;
+    });
+
     this.frame();
   }
 
-  save() {
-    this.fs.save(this.name.value, this.recording.saveFile());
-  }
+  areKeyframesStale() {} // abstract: returns true if we need to recache
 
-  play() {
-    this.recording.startPlayback();
-    this.status.textContent = 'playing';
-    this.frame();
-  }
+  isActive() {} // abstract: returns whether we're stopped or not
 
-  record() {
-    this.recording.startRecording();
-    this.status.textContent = 'recording';
-    this.frame();
-  }
-
-  stop() {
-    this.recording.stop();
-    this.status.textContent = 'stopped';
-    this.frame();
-  }
+  updateStatus() {} // abstract: returns status text
 
   frame() {
-    if (this.status.textContent == 'playing') {
-      const fraction = this.recording.index / this.recording.buffer.length;
-      this.position.textContent = `${(100 * fraction).toFixed(2)}%`;
-    } else {
-      this.position.textContent = `${this.recording.index} bytes`;
-    }      
+    // update
+    let updateKeyframe = false;
+    if (this.areKeyframesStale()) {
+      this.keyframes = this.movie.keyframes();
+      // which keyframe are we on?
+      this.currentKeyframe = 0;
+      this.trackingKeyframe = true;
+      updateKeyframe = true;
+    }
+    if (!this.isActive()) { // ???
+      this.status.textContent = 'Stopped';
+      return;
+    }
+    const frame = this.movie.frame();
+    while (this.trackingKeyframe &&
+           this.currentKeyframe < this.keyframes.length - 1 &&
+           this.keyframes[this.currentKeyframe + 1].position <= frame) {
+      this.currentKeyframe++;
+      updateKeyframe = true;
+    }
+    this.status.textContent = this.updateStatus();
+    if (updateKeyframe) this.updateKeyframe();
+  }
+
+  updateKeyframe() {
+    const kf = this.currentKeyframe;
+    const kft = this.keyframes.length;
+    this.keyframeStatus.textContent = `${kf} / ${kft}`;
+    this.keyframeSnapshot.src = this.keyframes[kf].imageDataUrl();
+    const frame = this.movie.frame();
+    this.trackingKeyframe =
+        kf >= kft - 1 ||
+            (this.keyframes[kf].position <= frame &&
+             this.keyframes[kf + 1].position > frame);
+  }
+
+  startRecording() {
+    throw new Error('not implemented');
+    this.frame();
+  }
+
+  seekToKeyframe() {
+    this.movie.seek(this.keyframes[this.currentKeyframe]);
+    this.frame();
+  }
+
+  moveKeyframe(target) {
+    this.currentKeyframe = target;
+    this.updateKeyframe();
+    this.frame();
+  }
+}
+
+// while playing pack:
+//   Playing 5 / 200 (2.5%) [record] [stop]
+//   Keyframes: 1 / 20 [seek]
+//     [<] [img] [>]    -- plus keyboard???
+export class PlaybackPanel extends MoviePanel {
+  constructor(nes) {
+    super(nes, nes.movie);
+
+    text(this.top, ' ');
+    link(this.top, '[record]', () => this.startRecording());
+    text(this.top, ' ');
+    link(this.top, '[stop]', () => this.stopPlayback());
+  }
+
+  areKeyframesStale() {
+    if (this.nes.movie != this.movie) {
+      // changed the playback on us - refresh keyframes, etc
+      this.movie = this.nes.playback;
+      return true;
+    }
+    return false;
+  }
+
+  isActive() {
+    return this.movie.playing;
+  }
+
+  updateStatus() {
+    const frame = this.movie.frame();
+    const total = this.movie.totalFrames();
+    const percent = (frame / total).toFixed(2);
+    return `Playing ${frame} / ${total} ${percent}%`;
+  }
+
+  startRecording() {
+    throw new Error('not implemented');
+    this.frame();
+  }
+
+  stopPlayback() {
+    this.movie.stop();
+    this.frame();
+    // TODO - null out nes.playback?
+  }
+}
+
+
+// while recording
+//   Recorded 5 frames [save] [cancel]
+//   Keyframes: 1 / 20 [seek]
+//     [<] [img] [>]    -- plus keyboard???
+export class RecordPanel extends MoviePanel {
+  constructor(main, filename) {
+    super(main.nes, main.nes.movie);
+    this.fs = main.fs;
+    this.filename = filename;
+
+    text(this.top, ' ');
+    this.startButton = link(this.top, '[start]', () => this.start());
+    this.saveButton = link(this.top, '[save]', () => this.save());
+    text(this.top, ' ');
+    link(this.top, '[cancel]', () => this.cancel());
+    this.saveButton.style.display = 'none';
+  }
+
+  areKeyframesStale() {
+    if (this.nes.movie != this.movie) {
+      // changed the playback on us - refresh keyframes, etc
+      this.movie = this.nes.movie;
+      return true;
+    }
+    return this.movie.isLastKeyframeStale(
+        this.keyframes[this.keyframes.length - 1]);
+  }
+
+  isActive() {
+    return this.movie.recording;
+  }
+
+  updateStatus() {
+    return `Recorded ${this.movie.frame()} frames`;
+  }
+
+  start() {
+    this.movie.start();
+    this.saveButton.style.display = 'inline';
+    this.startButton.style.display = 'none';
+  }
+
+  async save() {
+    this.fs.save(this.filename, this.movie.save());
+  }
+
+  cancel() {
+    this.movie.stop();
+    // TODO - take a final snapshot so we can resume later?
   }
 }
 
@@ -474,3 +609,66 @@ class NametableWatch extends Watch {
     }
   }
 }
+
+export class ControllerPanel extends Component {
+  constructor(nes) {
+    super();
+    this.nes = nes;
+    const e = this.element;
+    e.classList.add('controller');
+    this.toggle = [];
+    this.buttons = [];    
+    for (let c = 1; c <= 2; c++) {
+      const title = child(e, 'div');
+      text(title, `Controller ${c} `);
+      const label = child(title, 'label');
+      const cb = child(label, 'input', 'toggle');
+      cb.type = 'checkbox';
+      this.toggle[c] = cb;
+      const span = child(label, 'span');
+      text(span, 'toggle');
+      // ---
+      const main = child(e, 'div');
+      for (const [l, b] of BUTTONS) {
+        const sp = child(main, 'span', 'button');
+        sp.dataset['c'] = c;
+        sp.dataset['b'] = b;
+        this.buttons.push(sp);
+        text(sp, l);
+      }
+    }
+    const handle = ({type, target}) => {
+      if (!target.classList.contains('button')) return;
+      const c = Number(target.dataset['c']);
+      const b = Number(target.dataset['b']);
+      if (this.toggle[c].checked != (type == 'click')) return;
+      const p = type == 'mousedown' ? true : type == 'mouseup' ? false :
+            !target.classList.contains('pressed');
+      if (p) this.nes.buttonDown(c, b);
+      if (!p) this.nes.buttonUp(c, b);
+      this.frame();
+    };
+    e.addEventListener('mousedown', handle);
+    e.addEventListener('mouseup', handle);
+    e.addEventListener('click', handle);
+  }
+
+  frame() {
+    for (const button of this.buttons) {
+      const c = Number(button.dataset['c']);
+      const b = Number(button.dataset['b']);
+      button.classList.toggle('pressed', this.nes.controllers[c].state[b] & 1);
+    }
+  }
+}
+
+const BUTTONS = [
+  ['<', Controller.BUTTON_LEFT],
+  ['^', Controller.BUTTON_UP],
+  ['v', Controller.BUTTON_DOWN],
+  ['>', Controller.BUTTON_RIGHT],
+  ['sel', Controller.BUTTON_SELECT],
+  ['st', Controller.BUTTON_START],
+  ['B', Controller.BUTTON_B],
+  ['A', Controller.BUTTON_A],
+];

@@ -125,7 +125,7 @@ export class MMC3 extends NROM {
   }
 }
 
-const ExtSavestate = Proto.message({
+const ExtSavestate = Proto.message('Mmc3', {
   bankSelect: Proto.uint32(1),
   irqCounter: Proto.uint32(2),
   irqLatchValue: Proto.uint32(3),

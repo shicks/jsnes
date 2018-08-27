@@ -1,4 +1,3 @@
-import {Recording} from './recording.js';
 import {opdata, opmeta} from './opdata.js';
 
 // TODO - more pluggable debug framework
@@ -96,7 +95,6 @@ export class Debug {
     this.frame = 0;
     this.scanline = 0;
     this.lastPc = 0;
-    this.recording = new Recording(this.nes);
   }
 
   growBreakpoints_(addr) {

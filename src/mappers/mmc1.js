@@ -139,7 +139,7 @@ export class MMC1 extends NROM {
   }
 }
 
-const ExtSavestate = Proto.message({
+const ExtSavestate = Proto.message('Mmc1', {
   shiftRegister: Proto.uint32(1),
   control: Proto.uint32(2),
   chrLo: Proto.uint32(3),
