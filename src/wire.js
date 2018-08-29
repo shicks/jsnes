@@ -6,7 +6,7 @@ export const Savestate = Proto.message('Savestate', {
   // State of the PPU object.
   ppu:     Proto.bytes(2).required().message(() => Savestate.Ppu),
   // State of the PAPU object.
-  papu:    Proto.bytes(6)           .message(() => Savestate.Papu),
+  papu:    Proto.bytes(6).required().message(() => Savestate.Papu),
   // State of the mapper.
   mmap:    Proto.bytes(3).required().message(() => Savestate.Mmap),
   // Extra state required for saves during rendering (experimental).
@@ -85,73 +85,60 @@ export const Savestate = Proto.message('Savestate', {
     dmc:        Proto.bytes(5).required().message(() => Savestate.Papu.Dmc),
     state:      Proto.bytes(6).required().message(() => Savestate.Papu.State),
 
+    // Shared across square, triangle, and noise
     BaseChannel: Proto.message('Savestate.Papu.BaseChannel', {
       isEnabled:           Proto.uint32(1).required(),
       lengthCounter:       Proto.uint32(2).required(),
       lengthCounterEnable: Proto.uint32(3).required(),
-      progTimerCount:      Proto.uint32(4).required(),
-      progTimerMax:        Proto.uint32(5).required(),
-      envDecayCounter:     Proto.uint32(6).required(),
-      envDecayDisable:     Proto.uint32(7).required(),
-      envDecayLoopEnable:  Proto.uint32(8).required(),
-      envDecayRate:        Proto.uint32(9).required(),
-      envReset:            Proto.uint32(10).required(),
-      envVolume:           Proto.uint32(11).required(),
-      channelVolume:       Proto.uint32(12).required(),
+      progTimerMax:        Proto.uint32(4).required(),
+    }),
+
+    // Shared across square and noise
+    EnvChannel: Proto.message('Savestate.Papu.EnvChannel', {
+      envDecayDisable:     Proto.uint32(1).required(),
+      envDecayLoopEnable:  Proto.uint32(2).required(),
+      envDecayRate:        Proto.uint32(3).required(),
     }),
 
     Square: Proto.message('Savestate.Papu.Square', {
       base:              Proto.bytes(1).required()
                              .message(() => Savestate.Papu.BaseChannel),
-      sweepActive:       Proto.uint32(2).required(),
-      sweepCarry:        Proto.uint32(3).required(),
-      sweepCounter:      Proto.uint32(4).required(),
-      sweepCounterMax:   Proto.uint32(5).required(),
-      sweepMode:         Proto.uint32(6).required(),
-      sweepShiftAmount:  Proto.uint32(7).required(),
-      updateSweepPeriod: Proto.uint32(8).required(),
-      squareCounter:     Proto.uint32(9).required(),
-      dutyMode:          Proto.uint32(10).required(),
+      env:               Proto.bytes(2).required()
+                             .message(() => Savestate.Papu.EnvChannel),
+      sweepActive:       Proto.uint32(3).required(),
+      sweepCounterMax:   Proto.uint32(4).required(),
+      sweepMode:         Proto.uint32(5).required(),
+      sweepShiftAmount:  Proto.uint32(6).required(),
+      dutyMode:          Proto.uint32(7).required(),
     }),
 
     Triangle: Proto.message('Savestate.Papu.Triangle', {
       base:            Proto.bytes(1).required()
                            .message(() => Savestate.Papu.BaseChannel),
-      lcControl:       Proto.uint32(2).required(),
-      lcHalt:          Proto.uint32(3).required(),
-      lcLoadValue:     Proto.uint32(4).required(),
-      triangleCounter: Proto.uint32(5).required(),
+      lcHalt:          Proto.uint32(2).required(),
+      lcLoadValue:     Proto.uint32(3).required(),
     }),
 
     Noise: Proto.message('Savestate.Papu.Noise', {
       base:          Proto.bytes(1).required()
                          .message(() => Savestate.Papu.BaseChannel),
-      shiftNow:      Proto.uint32(2).required(),
-      shiftReg:      Proto.uint32(3).required(),
-      randomBit:     Proto.uint32(4).required(),
-      randomMode:    Proto.uint32(5).required(),
-      noiseAccValue: Proto.uint32(7).required(),
-      noiseAccCount: Proto.uint32(8).required(),
+      env:           Proto.bytes(2).required()
+                         .message(() => Savestate.Papu.EnvChannel),
+      randomMode:    Proto.uint32(3).required(),
     }),
 
     Dmc: Proto.message('Savestate.Papu.Dmc', {
       isEnabled:         Proto.uint32(1).required(),
-      hasSample:         Proto.uint32(2).required(),
-      irqGenerated:      Proto.uint32(3).required(),
-      playMode:          Proto.uint32(4).required(),
-      dmaFrquency:       Proto.uint32(5).required(),
-      dmaCounter:        Proto.uint32(6).required(),
-      deltaCounter:      Proto.uint32(7).required(),
-      playStartAddress:  Proto.uint32(8).required(),
-      playAddress:       Proto.uint32(9).required(),
-      playLength:        Proto.uint32(10).required(),
-      playLengthCounter: Proto.uint32(11).required(),
-      shiftCounter:      Proto.uint32(12).required(),
-      reg4012:           Proto.uint32(13).required(),
-      reg4013:           Proto.uint32(14).required(),
-      dacLsb:            Proto.uint32(15).required(),
-      data:              Proto.uint32(16).required(),
-      // TODO - check to make sure we haven't beoken audio
+      irqGenerated:      Proto.uint32(2).required(),
+      playMode:          Proto.uint32(3).required(),
+      dmaFrequency:      Proto.uint32(4).required(),
+      dmaCounter:        Proto.uint32(5).required(),
+      playStartAddress:  Proto.uint32(6).required(),
+      playAddress:       Proto.uint32(7).required(),
+      playLength:        Proto.uint32(8).required(),
+      playLengthCounter: Proto.uint32(9).required(),
+      shiftCounter:      Proto.uint32(10).required(),
+      // TODO - check to make sure we haven't broken audio
       // then integrate with NES.savestate
     }),
 
@@ -165,8 +152,7 @@ export const Savestate = Proto.message('Savestate', {
       derivedFrameCounter: Proto.uint32(7).required(),
       countSequence:       Proto.uint32(8).required(),
       sampleTimer:         Proto.uint32(9).required(),
-      accCount:            Proto.uint32(10).required(),
-      extraCycles:         Proto.uint32(11).required(),
+      extraCycles:         Proto.uint32(10).required(),
     }),
   }),
 

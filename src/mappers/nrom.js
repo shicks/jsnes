@@ -157,7 +157,7 @@ export class NROM {
   load4(address) {
     if (address == 0x4015) {
       // 4015 APU Status
-      return this.nes.papu.readReg(0x4015);
+      return this.nes.papu.readStatus();
     } else if (address == 0x4016) {
       // 4016 Joystick 1 + Strobe -
       return this.joy1Read();

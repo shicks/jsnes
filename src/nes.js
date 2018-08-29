@@ -281,6 +281,7 @@ if(pr)buf.push(`endScanline ${ppu.scanline}`);
     const data = {
       cpu: this.cpu.writeSavestate(),
       ppu: this.ppu.writeSavestate(),
+      papu: this.papu.writeSavestate(),
       mmap: this.mmap.writeSavestate(),
       screen: this.opts.getScreenshot(),
     };
@@ -297,6 +298,7 @@ if(pr)buf.push(`endScanline ${ppu.scanline}`);
     const savestate = Savestate.parse(buffer, 'NES-STA\x1a');
     this.cpu.restoreSavestate(savestate.cpu);
     this.ppu.restoreSavestate(savestate.ppu);
+    this.papu.restoreSavestate(savestate.papu);
     this.mmap.restoreSavestate(savestate.mmap);
     this.breakpointCycles =
       savestate.partial && savestate.partial.breakpointCycles != null ?

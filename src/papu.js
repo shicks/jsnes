@@ -1,4 +1,5 @@
 import {seq} from './utils.js';
+import {Savestate} from './wire.js';
 
 var CPU_FREQ_NTSC = 1789772.5; //1789772.72727272d;
 // var CPU_FREQ_PAL = 1773447.4;
@@ -117,8 +118,133 @@ export class PAPU {
     this.minSample = 500000;
   }
 
+  writeSavestate() {
+    const writeBase = (c) => ({
+      isEnabled:           c.isEnabled,
+      lengthCounter:       c.lengthCounter,
+      lengthCounterEnable: c.lengthCounterEnable,
+      progTimerMax:        c.progTimerMax,
+    });
+    const writeEnv = (c) => ({
+      envDecayDisable:    c.envDecayDisable,
+      envDecayLoopEnable: c.envDecayLoopEnable,
+      envDecayRate:       c.envDecayRate,
+    });
+    const writeSquare = (c) => ({
+      base:             writeBase(c),
+      env:              writeEnv(c),
+      sweepActive:      c.sweepActive,
+      sweepCounterMax:  c.sweepCounterMax,
+      sweepMode:        c.sweepMode,
+      sweepShiftAmount: c.sweepShiftAmount,
+      dutyMode:         c.dutyMode,
+    });
+    const writeTriangle = (c) => ({
+      base:        writeBase(c),
+      lcHalt:      c.lcHalt,
+      lcLoadValue: c.lcLoadValue,
+    });
+    const writeNoise = (c) => ({
+      base:       writeBase(c),
+      env:        writeEnv(c),
+      randomMode: c.randomMode,
+    });
+    const writeDmc = (c) => ({
+      isEnabled:         c.isEnabled,
+      irqGenerated:      c.irqGenerated,
+      playMode:          c.playMode,
+      dmaFrequency:      c.dmaFrequency,
+      dmaCounter:        c.dmaCounter,
+      playStartAddress:  c.playStartAddress,
+      playAddress:       c.playAddress,
+      playLength:        c.playLength,
+      playLengthCounter: c.playLengthCounter,
+      shiftCounter:      c.shiftCounter,
+    });
+    return Savestate.Papu.of({
+      square1:  writeSquare(this.square1),
+      square2:  writeSquare(this.square2),
+      triangle: writeTriangle(this.triangle),
+      noise:    writeNoise(this.noise),
+      dmc:      writeDmc(this.dmc),
+      state: {
+        frameIrqCounterMax: this.frameIrqCounterMax,
+        frameIrqEnabled: this.frameIrqEnabled,
+        frameIrqActive: this.frameIrqActive,
+        initingHardware: this.initingHardware,
+        initCounter: this.initCounter,
+        masterFrameCounter: this.masterFrameCounter,
+        derivedFrameCounter: this.derivedFrameCounter,
+        countSequence: this.countSequence,
+        sampleTimer: this.sampleTimer,
+        extraCycles: this.extraCycles,
+      },
+    });
+  }
+
+  restoreSavestate(papu) {
+    const restoreBase = (c, b) => {
+      c.isEnabled           = b.isEnabled;
+      c.lengthCounter       = b.lengthCounter;
+      c.lengthCounterEnable = b.lengthCounterEnable;
+      c.progTimerMax        = b.progTimerMax;
+    };
+    const restoreEnv = (c, b) => {
+      c.envDecayDisable    = b.envDecayDisable;
+      c.envDecayLoopEnable = b.envDecayLoopEnable;
+      c.envDecayRate       = b.envDecayRate;
+      if (c.envDecayDisable) c.channelVolume = c.envDecayRate;
+    };
+    const restoreSquare = (c, b) => {
+      restoreBase(c, b);
+      restoreEnv(c, b);
+      c.sweepActive      = b.sweepActive;
+      c.sweepCounterMax  = b.sweepCounterMax;
+      c.sweepMode        = b.sweepMode;
+      c.sweepShiftAmount = b.sweepShiftAmount;
+      c.dutyMode         = b.dutyMode;
+    };
+    const restoreTriangle = (c, b) => {
+      restoreBase(c, b);
+      c.lcHalt      = b.lcHalt;
+      c.lcLoadValue = b.lcLoadValue;
+    };
+    const restoreNoise = (c, b) => {
+      restoreBase(c, b);
+      restoreEnv(c, b);
+      c.randomMode = b.randomMode;
+    };
+    const restoreDmc = (c, b) => {
+      c.isEnabled         = b.isEnabled;
+      c.irqGenerated      = b.irqGenerated;
+      c.playMode          = b.playMode;
+      c.dmaFrequency      = b.dmaFrequency;
+      c.dmaCounter        = b.dmaCounter;
+      c.playStartAddress  = b.playStartAddress;
+      c.playAddress       = b.playAddress;
+      c.playLength        = b.playLength;
+      c.playLengthCounter = b.playLengthCounter;
+      c.shiftCounter      = b.shiftCounter;
+    };
+    restoreSquare(this.square1, papu.square1);
+    restoreSquare(this.square2, papu.square2);
+    restoreTriangle(this.triangle, papu.triangle);
+    restoreNoise(this.noise, papu.noise);
+    restoreDmc(this.dmc, papu.dmc);
+    this.frameIrqActive = papu.state.frameIrqActive;
+    this.frameIrqEnabled = papu.state.frameIrqEnabled;
+    this.frameIrqActive = papu.state.frameIrqActive;
+    this.initingHardware = papu.state.initingHardware;
+    this.initCounter = papu.state.initCounter;
+    this.masterFrameCounter = papu.state.masterFrameCounter;
+    this.derivedFrameCounter = papu.state.derivedFrameCounter;
+    this.countSequence = papu.state.countSequence;
+    this.sampleTimer = papu.state.sampleTimer;
+    this.extraCycles = papu.state.extraCycles;
+  }
+
   // eslint-disable-next-line no-unused-vars
-  readReg(address) {
+  readStatus() {
     // Read 0x4015:
     var tmp = 0;
     tmp |= this.square1.getLengthStatus();
@@ -479,7 +605,7 @@ export class PAPU {
     if (tnd_index >= TND_TABLE.length) {
       tnd_index = TND_TABLE.length - 1;
     }
-    var sampleValueL =
+   var sampleValueL =
       SQUARE_TABLE[sq_index] + TND_TABLE[tnd_index] - DC_VALUE;
 
     // Right channel:
@@ -604,8 +730,6 @@ class ChannelDM {
     this.playLength = 0;
     this.playLengthCounter = 0;
     this.shiftCounter = 0;
-    this.reg4012 = 0;
-    this.reg4013 = 0;
     this.dacLsb = 0;
     this.data = 0;
 
@@ -707,12 +831,10 @@ class ChannelDM {
       // DMA address load register
       this.playStartAddress = (value << 6) | 0x0c000;
       this.playAddress = this.playStartAddress;
-      this.reg4012 = value;
     } else if (address === 0x4013) {
       // Length of play code
       this.playLength = (value << 4) + 1;
       this.playLengthCounter = this.playLength;
-      this.reg4013 = value;
     } else if (address === 0x4015) {
       // DMC/IRQ Status
       if (((value >> 4) & 1) === 0) {
@@ -856,12 +978,11 @@ class ChannelSquare {
     this.lengthCounterEnable = false;
 
     this.sweepActive = false;
-    this.sweepCarry = false;
     this.sweepCounter = 0;
     this.sweepCounterMax = 0;
     this.sweepMode = 0;
     this.sweepShiftAmount = 0;
-    this.updateSweepPeriod = null;
+    this.updateSweepPeriod = false;
     this.squareCounter = 0;
     this.dutyMode = 0;
 
@@ -920,12 +1041,10 @@ class ChannelSquare {
         this.progTimerMax > 7
       ) {
         // Calculate result from shifter:
-        this.sweepCarry = false;
         if (this.sweepMode === 0) {
           this.progTimerMax += this.progTimerMax >> this.sweepShiftAmount;
           if (this.progTimerMax > 4095) {
             this.progTimerMax = 4095;
-            this.sweepCarry = true;
           }
         } else {
           this.progTimerMax -=
@@ -946,7 +1065,6 @@ class ChannelSquare {
         this.sweepMode === 0 &&
         this.progTimerMax + (this.progTimerMax >> this.sweepShiftAmount) > 4095
       ) {
-        //if (this.sweepCarry) {
         this.sampleValue = 0;
       } else {
         this.sampleValue =
@@ -1020,7 +1138,6 @@ class ChannelTriangle {
     this.progTimerCount = 0;
     this.progTimerMax = 0;
 
-    this.lcControl = false;
     this.lcHalt = true;
     this.lcLoadValue = 0;
     this.triangleCounter = 0;
@@ -1048,7 +1165,7 @@ class ChannelTriangle {
       this.linearCounter--;
       this.updateSampleCondition();
     }
-    if (!this.lcControl) {
+    if (this.lengthCounterEnable) {
       // Clear halt flag:
       this.lcHalt = false;
     }
@@ -1058,19 +1175,11 @@ class ChannelTriangle {
     return this.lengthCounter === 0 || !this.isEnabled ? 0 : 1;
   }
 
-  // eslint-disable-next-line no-unused-vars
-  readReg(address) {
-    return 0;
-  }
-
   writeReg(address, value) {
     if (address === 0x4008) {
       // New values for linear counter:
-      this.lcControl = (value & 0x80) !== 0;
+      this.lengthCounterEnable = (value & 0x80) === 0;
       this.lcLoadValue = value & 0x7f;
-
-      // Length counter enable:
-      this.lengthCounterEnable = !this.lcControl;
     } else if (address === 0x400a) {
       // Programmable timer:
       this.progTimerMax &= 0x700;

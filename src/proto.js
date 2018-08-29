@@ -187,7 +187,7 @@ export class Proto {
     for (const key in obj) {
       if (obj[key] == null) continue;
       const spec = this[SPEC].byName[key];
-      checkState(spec, `unknown field: ${key}`);
+      checkState(spec, `unknown field: ${key} in ${this.prototype[Symbol.toStringTag]}`);
       let value = obj[key];
       if (spec.messageType) {
         if (spec.isRepeated) {
