@@ -89,12 +89,27 @@ export class Debug {
     this.breakIf = () => true,
     this.breakIn = null;
     this.breakAtScanline = null;
+    this.breakAtFrame = null;
     this.break = false;
     this.mt = new Debug.MemTracker(this.nes);
     this.origin = new Debug.OriginTracker(this.nes);
     this.frame = 0;
     this.scanline = 0;
     this.lastPc = 0;
+
+    // for comparisons
+    this.compare = null;
+    this.compareMode = 0;
+  }
+
+  recordComparison(mem) {
+    this.compareMode = 1;
+    this.compare = new Map();
+    for (const m of mem) this.compare.set(m, new Map());
+  }
+
+  playbackComparison() {
+    this.compareMode = 2;
   }
 
   growBreakpoints_(addr) {
@@ -196,6 +211,21 @@ export class Debug {
                                 (op & MEM_READ ? BREAK_RAM_R : 0) |
                                 (op & MEM_WRITE ? BREAK_RAM_W : 0));
 
+    if (this.compare && this.compare.has(address)) {
+      const map = this.compare.get(address);
+      const ppu = this.nes.ppu;
+      if (this.compareMode == 1) {
+        map.set(`${ppu.frame}:${ppu.scanline}:${ppu.curX}`, value);
+      } else {
+        let expected = map.get(`${ppu.frame}:${ppu.scanline}:${ppu.curX}`);
+        if (!expected) expected = String(expected);
+        if (value != expected) {
+          this.break = true;
+          console.log(`break on failed compare $${address.toString(16)} at ${ppu.frame}:${ppu.scanline}:${ppu.curX}: expected ${expected.toString(16)} got ${value.toString(16)}`);
+        }
+      }
+    }
+
     if (this.watches && addr in this.watches) {
       const w = this.watches[addr];
       const wr = bank != null ? w[BREAK_PRG_R] : op & MEM_READ ? w[BREAK_RAM_R] : null;
@@ -257,6 +287,10 @@ export class Debug {
       if (this.breakAtScanline != null) {
         this.break = true;
         this.breakAtScanline = null;
+      }
+      if (this.breakAtFrame != null && frame >= this.breakAtFrame) {
+        this.break = true;
+        this.breakAtFrame = null;
       }
     } else if (line > 20) {
       if (this.buffer[this.pos - 1] == Debug.SCANLINE &&

@@ -44,6 +44,8 @@ export class FrameTimer {
 
     this.frame = 0;
     this.frameSkip = 0;
+    this.frameSkipFpsFrames = 0;
+    this.frameSkipFpsLastFrameTime = 0;
   }
 
   start() {
@@ -63,6 +65,7 @@ export class FrameTimer {
   }
 
   onAnimationFrame() {
+    if (!this.running) return;
     if (this.calibrating) {
       console.log('Calibrating framerate');
       // TODO(sdh): probably avoid calibrating after a breakpoint?
@@ -103,8 +106,13 @@ export class FrameTimer {
     }
     if (this.frameSkip) {
       const time = new Date().getTime();
-      console.log(`Average FPS: ${((this.frameSkip + 1) / (time - lastFrameTime) * 1000).toFixed(2)}`);
-      lastFrameTime = time;
+      this.frameSkipFpsFrames += this.frameSkip + 1;
+      if (time - this.frameSkipFpsLastFrameTime > 2000) {
+        console.log(`Average FPS: ${(this.frameSkipFpsFrames /
+            (time - this.frameSkipFpsLastFrameTime) * 1000).toFixed(2)}`);
+        this.frameSkipFpsLastFrameTime = time;
+        this.frameSkipFpsFrames = 0;
+      }
     }
     this.requestAnimationFrame();
 

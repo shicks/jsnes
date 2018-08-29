@@ -375,6 +375,7 @@ class MoviePanel extends Component {
       this.nes.movie = null;
     });
 
+    this.updateKeyframe();
     this.frame();
   }
 
@@ -412,7 +413,8 @@ class MoviePanel extends Component {
   updateKeyframe() {
     const kf = this.currentKeyframe;
     const kft = this.keyframes.length;
-    this.keyframeStatus.textContent = `${kf} / ${kft}`;
+    this.keyframeStatus.textContent = `${kf + 1} / ${kft}`;
+    if (!kft) return;
     this.keyframeSnapshot.src = this.keyframes[kf].imageDataUrl();
     const frame = this.movie.frame();
     this.trackingKeyframe =
@@ -428,11 +430,12 @@ class MoviePanel extends Component {
 
   seekToKeyframe() {
     this.movie.seek(this.keyframes[this.currentKeyframe]);
+    this.trackingKeyframe = true;
     this.frame();
   }
 
-  moveKeyframe(target) {
-    this.currentKeyframe = target;
+  selectKeyframe(target) {
+    this.currentKeyframe = Math.max(0, Math.min(target, this.keyframes.length - 1));
     this.updateKeyframe();
     this.frame();
   }
@@ -468,7 +471,7 @@ export class PlaybackPanel extends MoviePanel {
   updateStatus() {
     const frame = this.movie.frame();
     const total = this.movie.totalFrames();
-    const percent = (frame / total).toFixed(2);
+    const percent = (100 * frame / total).toFixed(2);
     return `Playing ${frame} / ${total} ${percent}%`;
   }
 
@@ -509,8 +512,9 @@ export class RecordPanel extends MoviePanel {
       this.movie = this.nes.movie;
       return true;
     }
-    return this.movie.isLastKeyframeStale(
-        this.keyframes[this.keyframes.length - 1]);
+    return this.keyframes.length &&
+        this.movie.isLastKeyframeStale(
+            this.keyframes[this.keyframes.length - 1]);
   }
 
   isActive() {
@@ -523,6 +527,7 @@ export class RecordPanel extends MoviePanel {
 
   start() {
     this.movie.start();
+    this.movie.keyframe(this.nes.writeSavestate());
     this.saveButton.style.display = 'inline';
     this.startButton.style.display = 'none';
   }
@@ -616,18 +621,10 @@ export class ControllerPanel extends Component {
     this.nes = nes;
     const e = this.element;
     e.classList.add('controller');
-    this.toggle = [];
     this.buttons = [];    
     for (let c = 1; c <= 2; c++) {
       const title = child(e, 'div');
-      text(title, `Controller ${c} `);
-      const label = child(title, 'label');
-      const cb = child(label, 'input', 'toggle');
-      cb.type = 'checkbox';
-      this.toggle[c] = cb;
-      const span = child(label, 'span');
-      text(span, 'toggle');
-      // ---
+      text(title, `Controller ${c}:`);
       const main = child(e, 'div');
       for (const [l, b] of BUTTONS) {
         const sp = child(main, 'span', 'button');
@@ -641,16 +638,12 @@ export class ControllerPanel extends Component {
       if (!target.classList.contains('button')) return;
       const c = Number(target.dataset['c']);
       const b = Number(target.dataset['b']);
-      if (this.toggle[c].checked != (type == 'click')) return;
-      const p = type == 'mousedown' ? true : type == 'mouseup' ? false :
-            !target.classList.contains('pressed');
-      if (p) this.nes.buttonDown(c, b);
-      if (!p) this.nes.buttonUp(c, b);
+      if (type == 'mousedown') this.nes.buttonDown(c, b);
+      if (type == 'mouseup') this.nes.buttonUp(c, b);
       this.frame();
     };
     e.addEventListener('mousedown', handle);
     e.addEventListener('mouseup', handle);
-    e.addEventListener('click', handle);
   }
 
   frame() {

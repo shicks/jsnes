@@ -220,19 +220,6 @@
   margin: 3px 0;
 }
 
-.controller .toggle {
-  display: none;
-}
-
-.controller .toggle + span {
-  margin: 1px;
-}
-
-.controller .toggle:checked + span {
-  margin: 0;
-  border: 1px solid #555;
-}
-
 .controller .button {
   margin: 2px;
   padding: 2px
@@ -245,4 +232,14 @@
 
 .controller {
   user-select: none;
+}
+
+.controller a,
+.movie a {
+  text-decoration: none;
+}
+
+.controller a:visited,
+.movie a:visited {
+  color: blue;
 }

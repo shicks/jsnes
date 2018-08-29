@@ -1,4 +1,4 @@
-import {Movie} from './wire.js';
+import {Movie, Savestate} from './wire.js';
 import {checkState} from './utils.js';
 
 export {Movie};
@@ -78,7 +78,7 @@ class Keyframe {
   }
 
   image() {
-    return new Uint8Array(this.movie.movie.chunks[this.index].snapshot.screen);
+    return new Uint8Array(this.movie.getImage(this.index));
   }
 
   imageDataUrl() {
@@ -135,7 +135,7 @@ export class Playback {
     const chunks = this.movie.chunks;
     for (let i = 0; i < chunks.length; i++) {
       if (chunks[i].snapshot) {
-        result.push(new Keyframe(this.movie, i, frames));
+        result.push(new Keyframe(this, i, frames));
       }
       frames += chunks[i].frames;
     }
@@ -143,9 +143,14 @@ export class Playback {
   }
 
   seek(keyframe) {
-    checkState(keyframe.movie == this.movie, 'invalid keyframe');
+    checkState(keyframe.movie == this, 'invalid keyframe');
     this.chunkIndex = keyframe.index;
     this.framesFromStart = keyframe.position;
+    this.recordIndex = 0;
+    this.framesWaited = 0;
+    this.playing = true;
+    this.nes.resetControllers();
+    this.nes.restoreSavestate(this.movie.chunks[keyframe.index].snapshot);
   }
 
   peekRecord() {
@@ -167,8 +172,6 @@ export class Playback {
   // making sure not to hang the UI while we do it.
   playbackFrame() {
     if (!this.playing) return;
-    this.framesWaited++;
-    this.framesFromStart++;
     let rec = this.peekRecord();
     if (!rec) return;
     while (rec && rec.frames == this.framesWaited) {
@@ -177,21 +180,31 @@ export class Playback {
       } else if (rec.softReset) {
         this.nes.cpu.softReset();
       } else if (rec.pressed) {
-        console.log(`playback: button down ${rec.controller+1}:${rec.button}`);
+        //console.log(`playback: button down ${rec.controller+1}:${rec.button}`);
         this.nes.buttonDown(rec.controller + 1, rec.button);
       } else {
-        console.log(`playback: button up   ${rec.controller+1}:${rec.button}`);
+        //console.log(`playback: button up   ${rec.controller+1}:${rec.button}`);
         this.nes.buttonUp(rec.controller + 1, rec.button);
       }
       this.framesWaited = 0;
       this.recordIndex++;
+      rec = this.peekRecord();
     }
     if (!rec) this.onStop();
+    this.framesWaited++;
+    this.framesFromStart++;
   }
 
   // Returns a movie that ends at the current frame.
   slice() {
     throw new Error('Not yet implemented');
+  }
+
+  getImage(chunkIndex) {
+    const result =
+        Savestate.parse(this.movie.chunks[chunkIndex].snapshot, 'NES-STA\x1a')
+            .screen;
+    return result;
   }
 }
 
@@ -245,6 +258,9 @@ export class Recorder {
     this.lastSnapshot = snapshot;
     this.chunks.push(chunk);
     this.records = [];
+    for (const [controller, button] of this.nes.buttonsPressed()) {
+      this.record({controller, button, pressed: true});
+    }
   }
 
   record({controller, button, pressed, reset}) {
@@ -255,10 +271,11 @@ export class Recorder {
       controller = controller > 1 ? 1 : 0;
       checkState(button >= 0 && button <= 7,
                  `button must be between 0 and 7: ${button}`);
-      button = ((button & 7) << 1) | (pressed ? 1 : 0);
+      button = button & 7;
       checkState(!reset, 'reset cannot be combined with buttons');
+      pressed = pressed ? 1 : 0;
     }
-    console.log(`record ctrl ${controller} btn ${button} pressed ${pressed}`);
+    //console.log(`record ctrl ${controller} btn ${button} pressed ${pressed}`);
 
     const rec = new Record();
     rec.frames = this.framesSinceRecord;
@@ -317,12 +334,12 @@ export class Recorder {
     const result = [];
     for (let i = 0; i < this.chunks.length; i++) {
       if (this.chunks[i].snapshot) {
-        result.push(new Keyframe(this.movie, i, frames));
+        result.push(new Keyframe(this, i, frames));
       }
       frames += this.chunks[i].frames;
     }
     if (this.lastSnapshot) {
-      result.push(new Keyframe(this.movie, this.chunks.length, frames));
+      result.push(new Keyframe(this, this.chunks.length, frames));
     }
     return result;
   }
@@ -332,14 +349,21 @@ export class Recorder {
   }
 
   seek(keyframe) {
-    checkState(keyframe.movie == this.movie, 'invalid keyframe');
+    checkState(keyframe.movie == this, 'invalid keyframe');
     const savestate = this.chunks[keyframe.index].snapshot;
     this.nes.restoreSavestate(savestate);
     this.lastSnapshot = savestate;
     this.chunks.splice(keyframe.index, this.chunks.length - keyframe.index);
     this.records = [];
+    this.nes.resetControllers();
     this.totalFrames = keyframe.position;
     this.chunkFrames = 0;
     this.framesSinceRecord = 0;
+    this.recording = true;
+  }
+
+  getImage(chunkIndex) {
+    return (chunkIndex < this.chunks.length ?
+            this.chunks[chunkIndex].snapshot : this.lastSnapshot).screen;
   }
 }

@@ -25,5 +25,9 @@ Controller.prototype = {
     if (this.state[key] == 0x40) return false;
     this.state[key] = 0x40;
     return true;
-  }
+  },
+
+  isPressed: function(key) {
+    return this.state[key] == 0x41;
+  },
 };

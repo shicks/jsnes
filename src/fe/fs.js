@@ -61,6 +61,7 @@ class Picker extends Component {
     this.addCornerButton('+', () => {
       const name = window.prompt('filename');
       resolve({name, data: new Uint8Array(0)});
+      super.remove();
     });
     this.element.addEventListener('click', (e) => {
       if (!e.target.dataset.name) return;
@@ -118,7 +119,7 @@ export class FileSystem {
         return file;
       } else {
         // picked, fetch it
-        return this.get(file.name);
+        return this.open(file.name);
       }
     });
   }
@@ -128,7 +129,7 @@ export class FileSystem {
    * @param {string} name
    * @return {!Promise<!File|undefined>}
    */
-  get(name) {
+  open(name) {
     // update accessedMs, but fire-and-forget.
     this.db.transaction([FILES], 'readwrite', async (files) => {
       const f = await request(files.get(name));

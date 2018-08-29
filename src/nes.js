@@ -64,7 +64,6 @@ export class NES {
     this.breakpointCycles = null;
 
     this.fpsFrameCount = 0;
-    this.frameCount = 0;
     this.romData = null;
 
     this.movie = null; // either a recorder or a playback
@@ -80,7 +79,6 @@ export class NES {
 
     this.lastFpsTime = null;
     this.fpsFrameCount = 0;
-    this.frameCount = 0;
   }
 
   frame() {
@@ -89,14 +87,26 @@ export class NES {
       cycles = this.breakpointCycles;
       this.breakpointCycles = null;
     } else {
+      // Ensure we only update movie frames once per frame,
+      // and not in response to during-rendering 
+      if (this.movie instanceof Recorder) {
+        this.movie.recordFrame();
+      } else if (this.movie instanceof Playback) {
+        this.movie.playbackFrame();
+      }
       this.ppu.startFrame();
     }
     var emulateSound = this.opts.emulateSound;
     var cpu = this.cpu;
     var ppu = this.ppu;
     var papu = this.papu;
+let buf=[];try{
     FRAMELOOP: for (;;) {
+//13748
+const pr=false;//this.ppu.frame == 13253 && this.ppu.scanline < 23 || this.ppu.frame==13252 || this.ppu.frame == 13251 && this.ppu.scanline > 250;
+if(pr)buf.push(`${this.ppu.frame.toString(16)}: scanline ${this.ppu.scanline} curX ${this.ppu.curX} PC ${this.cpu.REG_PC.toString(16)}`);
       if (this.debug.break) {
+if(pr)buf.push(`  break`);
         this.debug.break = false;
         this.breakpointCycles = cycles;
         this.opts.onBreak(true);
@@ -105,11 +115,13 @@ export class NES {
       if (cpu.cyclesToHalt === 0) {
         // Execute a CPU instruction
         cycles = cpu.emulate();
+if(pr)buf.push(`  execute => cycles ${cycles}`);
         if (emulateSound) {
           papu.clockFrameCounter(cycles);
         }
         cycles *= 3;
       } else {
+if(pr)buf.push(`  halt ${cpu.cyclesToHalt}`);
         if (cpu.cyclesToHalt > 8) {
           cycles = 24;
           if (emulateSound) {
@@ -123,6 +135,7 @@ export class NES {
           }
           cpu.cyclesToHalt = 0;
         }
+if(pr)buf[buf.length-1] += ` => cycles ${cycles}`;
       }
 
       for (; cycles > 0; cycles--) {
@@ -135,10 +148,9 @@ export class NES {
           ppu.setSprite0Hit();
         }
 
-        if (ppu.requestEndFrame) {
-          ppu.nmiCounter--;
-          if (ppu.nmiCounter === 0) {
-            ppu.requestEndFrame = false;
+        if (ppu.nmiCounter) {
+if(pr)buf.push(`requestEndFrame nmiCounter ${ppu.nmiCounter}`);
+          if (--ppu.nmiCounter === 0) {
             ppu.startVBlank();
             // NOTE: we're dropping cycles on the floor here,
             // probably we should keep track of where we're at,
@@ -148,25 +160,47 @@ export class NES {
           }
         }
 
-        ppu.curX++;
-        if (ppu.curX === 341) {
-          ppu.curX = 0;
+        if (++ppu.curX === 341) {
+if(pr)buf.push(`endScanline ${ppu.scanline}`);
           ppu.endScanline();
-          this.debug.logScanline(ppu.scanline, this.frameCount);
+          this.debug.logScanline(ppu.scanline, ppu.frame);
         }
       }
     }
+
+// TODO - move to top
+      // if (this.movie instanceof Recorder) {
+      //   this.movie.recordFrame();
+      // } else if (this.movie instanceof Playback) {
+      //   this.movie.playbackFrame();
+      // }
+
+
     if (this.debug.break) {
       this.debug.break = false;
       this.breakpointCycles = cycles;
       this.opts.onBreak(false);
     }
     this.fpsFrameCount++;
-    this.frameCount++;
-    if (this.movie instanceof Recorder) {
-      this.movie.recordFrame();
-    } else if (this.movie instanceof Playback) {
-      this.movie.playbackFrame();
+}finally{if(buf.length)console.log(buf.join('\n'));}
+  }
+
+  resetControllers() {
+    // Useful for seeking to keyframes - does not notify the recorder.
+    for (const controller in this.controllers) {
+      for (let button = 0; button < 8; button++) {
+        this.controllers[controller].buttonUp(button);
+      }
+    }
+  }
+
+  * buttonsPressed() {
+    for (const controller in this.controllers) {
+      for (let button = 0; button < 8; button++) {
+        if (this.controllers[controller].isPressed(button)) {
+          yield [controller, button];
+        }
+      }
     }
   }
 

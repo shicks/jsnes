@@ -37,7 +37,7 @@ export const Savestate = Proto.message('Savestate', {
     mem:     Proto.bytes(1).required().message(() => Savestate.Ppu.Memory),
     reg:     Proto.bytes(2).required().message(() => Savestate.Ppu.Registers),
     io:      Proto.bytes(3).required().message(() => Savestate.Ppu.Io),
-    meta:    Proto.bytes(4)           .message(() => Savestate.Ppu.Meta),
+    timing:  Proto.bytes(4)           .message(() => Savestate.Ppu.Timing),
     partial: Proto.bytes(5)           .message(() => Savestate.Ppu.Partial),
 
     Memory: Proto.message('Memory', {
@@ -65,24 +65,22 @@ export const Savestate = Proto.message('Savestate', {
       mirroring:    Proto.uint32(6).required(),
     }),
 
-    Meta: Proto.message('Meta', {
-      frame:        Proto.uint32(1),
+    Timing: Proto.message('Timing', {
+      frame:        Proto.uint32(1).required(),
+      scanline:     Proto.uint32(2),
+      curX:         Proto.uint32(3).required(),
+      nmiCounter:   Proto.uint32(4),
     }),
 
     Partial: Proto.message('Partial', {
-      hitSpr0:                 Proto.uint32(1) .required(),
-      spr0HitX:                Proto.uint32(2) .required(),
-      spr0HitY:                Proto.uint32(3) .required(),
-      curX:                    Proto.uint32(4) .required(),
-      scanline:                Proto.uint32(5) .required(),
-      lastRenderedScanline:    Proto.uint32(6) .required(),
-      requestEndFrame:         Proto.uint32(7) .required(),
-      dummyCycleToggle:        Proto.uint32(8) .required(),
-      nmiCounter:              Proto.uint32(9) .required(),
-      scanlineAlreadyRendered: Proto.uint32(10).required(),
-      buffer:                  Proto.bytes (11).required().array(Uint8Array),
-      bgbuffer:                Proto.bytes (12).required().array(Uint8Array),
-      pixrendered:             Proto.bytes (13).required().array(Uint8Array),
+      hitSpr0:                 Proto.uint32(1).required(),
+      spr0HitX:                Proto.uint32(2).required(),
+      spr0HitY:                Proto.uint32(3).required(),
+      lastRenderedScanline:    Proto.uint32(4).required(),
+      scanlineAlreadyRendered: Proto.uint32(5).required(),
+      buffer:                  Proto.bytes (6).required().array(Uint8Array),
+      bgbuffer:                Proto.bytes (7).required().array(Uint8Array),
+      pixrendered:             Proto.bytes (8).required().array(Uint8Array),
     }),
   }),
 

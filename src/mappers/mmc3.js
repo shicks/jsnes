@@ -112,7 +112,7 @@ export class MMC3 extends NROM {
       irqLatchValue: this.irqLatchValue,
       irqEnable: this.irqEnable,
       banks: this.banks,
-    });
+    }).serialize();
   }
 
   restoreExtSavestate(ext) {

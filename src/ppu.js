@@ -76,8 +76,6 @@ export function PPU(nes) {
   this.firstWrite = null;
   this.sramAddress = null;
   this.currentMirroring = null;
-  this.requestEndFrame = null;
-  this.dummyCycleToggle = null;
   this.nmiCounter = null;
   this.scanlineAlreadyRendered = null;
   this.f_nmiOnVblank = null;
@@ -156,8 +154,6 @@ PPU.prototype = {
     this.sramAddress = 0; // 8-bit only.
 
     this.currentMirroring = -1;
-    this.requestEndFrame = false;
-    this.dummyCycleToggle = false;
     this.nmiCounter = 0;
     this.scanlineAlreadyRendered = null;
 
@@ -297,16 +293,13 @@ PPU.prototype = {
   },
 
   endScanline: function() {
+    this.curX = 0;
     switch (this.scanline) {
       case 19:
-        // Dummy scanline.
-        // May be variable length:
-        if (this.dummyCycleToggle) {
-          // Remove dead cycle at end of scanline,
-          // for next scanline:
-          this.curX = 1;
-          this.dummyCycleToggle = !this.dummyCycleToggle;
-        }
+        // Scanline 20 has variable length: on odd frames, it has
+        // one cycle removed (total of 340, rather than 341).
+        // Note that this must run after 
+        if (this.frame & 1) this.curX = 1;
         break;
 
       case 20:
@@ -349,7 +342,6 @@ PPU.prototype = {
         // Dead scanline, no rendering.
         // Set VINT:
         this.status |= STATUS_VBLANK;
-        this.requestEndFrame = true;
         this.nmiCounter = 9;
 
         // Wrap around:
@@ -1182,8 +1174,11 @@ PPU.prototype = {
         ppuMask: this.readPpuMask(),
         mirroring: this.currentMirroring,
       },
-      meta: {
+      timing: {
         frame: this.frame,
+        scanline: this.scanline,
+        curX: this.curX,
+        nmiCounter: this.nmiCounter,
       },
     };
     // Nametables are only written if they're non-empty.
@@ -1199,12 +1194,7 @@ PPU.prototype = {
         hitSpr0: this.hitSpr0,
         spr0HitX: this.spr0HitX,
         spr0HitY: this.spr0HitY,
-        curX: this.curX,
-        scanline: this.scanline,
         lastRenderedScanline: this.lastRenderedScanline,
-        requestEndFrame: this.requestEndFrame,
-        dummyCycleToggle: this.dummyCycleToggle,
-        nmiCounter: this.nmiCounter,
         scanlineAlreadyRendered: this.scanlineAlreadyRendered,
         buffer: this.buffer,
         bgbuffer: this.bgbuffer,
@@ -1240,32 +1230,27 @@ PPU.prototype = {
     this.writePpuCtrl(ppu.io.ppuCtrl);
     this.writePpuMask(ppu.io.ppuMask);
     this.setMirroring(ppu.io.mirroring);
-    // Metadata
-    if (ppu.meta && ppu.meta.frame) this.frame = ppu.meta.frame;
+    // Timing
+    this.frame = ppu.timing.frame;
+    this.scanline = ppu.timing.scanline || 0;
+    this.curX = ppu.timing.curX;
+    this.nmiCounter = ppu.timing.nmiCounter || 0;
 
     // Partially-rendered frames
     if (ppu.partial) {
       this.hitSpr0 = ppu.partial.hitSpr0;
       this.spr0HitX = ppu.partial.spr0HitX;
       this.spr0HitY = ppu.partial.spr0HitY;
-      this.curX = ppu.partial.xurX;
-      this.scanline = ppu.partial.scanline;
       this.lastRenderedScanline = ppu.partial.lastRenderedScanline;
-      this.requestEndFrame = ppu.partial.requestEndFrame();
-      this.dummyCycleToggle = ppu.partial.dummyCycleToggle;
-      this.nmiCounter = ppu.partial.nmiCounter
       this.scanlineAlreadyRendered = ppu.partial.scanlineAlreadyRendered;
       this.buffer.set(ppu.partial.buffer);
       this.bgbuffer.set(ppu.partial.bgbuffer);
-      this.pixrendered.set(ppu.pixrendered);
+      this.pixrendered.set(ppu.partial.pixrendered);
     } else {
       // reset rendering variables?
       this.hitSpr0 = false;
       this.spr0HitX = this.spr0HitY = -1;
-      this.curX = this.scanline = this.nmiCounter = 0;
       this.lastRenderedScanline = -1;
-      this.requestEndFrame = false;
-      this.dummyCycleToggle = false;
       this.scanlineAlreadyRendered = false;
       // No need to worry about buffers, they'll be reset in startFrame.
     }

@@ -94,6 +94,23 @@ class Main {
     // window.addEventListener("resize", this.layout.bind(this));
     // this.layout();
     this.load(this.getHash('rom'));
+    if (this.getHash('playback')) {
+      // TODO - add these params to the hash automatically?
+      const pb = this.startPlayback(this.getHash('playback'));
+      if (this.getHash('keyframe') != null) {
+        pb.then(p => {
+          p.selectKeyframe(this.getHash('keyframe'));
+          p.seekToKeyframe();
+        });
+      }
+    }
+    if (this.getHash('breakAt')) {
+      const b = this.getHash('breakAt').split(':');
+      b[0] = Number.parseInt(b[0], 16);
+      if (!b[1]) b[1] = 'prg';
+      if (!b[2]) b[2] = 'x';
+      this.nes.debug.breakAt(...b);
+    }
   }
 
   setFrameSkip(skip) {
@@ -129,7 +146,7 @@ class Main {
 
   async load(romName = undefined) {
     if (romName) {
-      const data = await this.fs.get(romName);
+      const data = await this.fs.open(romName);
       if (data) {
         this.handleLoaded(romName, data.data);
         return;
@@ -172,10 +189,10 @@ class Main {
     for (const el of document.querySelectorAll('#grid > .component')) {
       // for now, just auto-create the Trace component if it's not there.
       const component = Component.map.get(el);
-      if (component instanceof Trace) trace = component;
+      if (component instanceof debug.Trace) trace = component;
       if (component) component.step();
     }
-    if (!trace) new Trace(this.nes, () => this.start()).step();
+    if (!trace) new debug.Trace(this.nes, () => this.start()).step();
   }
 
   handlePauseResume() {
@@ -223,37 +240,57 @@ class Main {
   chrRom(...pages) {
     return new debug.ChrRomViewer(this.nes, pages);
   }
+
+  saveSnapshot() { // q
+    window.snapshot = nes.writeSavestate();
+  }
+
+  loadSnapshot() { // w
+    // main.speakers.stop();
+    //main.speakers.clear();
+    this.nes.restoreSavestate(window.snapshot);
+    // setTimeout(() => main.speakers.start(), window.TIME || 0);
+  };
+
+  async startPlayback(file = undefined) {
+    if (typeof file == 'string') {
+      file = await this.fs.open(file);
+    } else if (!file) {
+      file = await this.fs.pick('Select movie to play');
+    }
+    if (!(this.nes.movie instanceof Playback)) {
+      this.nes.movie =
+          new Playback(this.nes, file.data, () => this.stop());
+      this.nes.movie.start();
+    }
+    return new debug.PlaybackPanel(this.nes);
+  }
+
+  // TODO - save snapshots to local storage
+  //   - consider also storing a screenshot along with?
+
+
+  // main.track = (type) => {
+  //   main.functions[68] = (main) => console.log(main.nes.debug.mt.expectDiff()), // D (Diff)
+  //   main.functions[82] = (main) => main.nes.debug.mt.reset(), // R (Reset)
+  //   main.functions[83] = (main) => console.log(main.nes.debug.mt.expectSame()), // S (Same)
+  //   main.functions[76] = (main) => console.log(main.nes.debug.mt.candidates()), // L (List)
+  // };
+
+  track(type) {
+    this.nes.debug.coverage.clear();
+    main.functions[67] = () => console.log(this.nes.debug.coverage.expectCovered()); // C (Covered)
+    main.functions[85] = () => console.log(this.nes.debug.coverage.expectUncovered()); // U (Uncov)
+    main.functions[86] = () => console.log(this.nes.debug.coverage.candidates(type, true)); // V (List)
+  };
+
+  watch(...addrs) {
+    new debug.WatchPanel(this.nes, ...addrs);
+  }
 }
 
 window.snapshot;
 window.main = new Main(document.getElementById('screen'));
-main.saveSnapshot = () => {window.snapshot = nes.writeSavestate();}; // q
-main.loadSnapshot = () => { // w
-  // main.speakers.stop();
-  //main.speakers.clear();
-  nes.restoreSavestate(window.snapshot);
-  // setTimeout(() => main.speakers.start(), window.TIME || 0);
-};
-
-// TODO - save snapshots to local storage
-//   - consider also storing a screenshot along with?
-
-
-// main.track = (type) => {
-//   main.functions[68] = (main) => console.log(main.nes.debug.mt.expectDiff()), // D (Diff)
-//   main.functions[82] = (main) => main.nes.debug.mt.reset(), // R (Reset)
-//   main.functions[83] = (main) => console.log(main.nes.debug.mt.expectSame()), // S (Same)
-//   main.functions[76] = (main) => console.log(main.nes.debug.mt.candidates()), // L (List)
-// };
-
-main.track = (type) => {
-  nes.debug.coverage.clear();
-  main.functions[67] = () => console.log(nes.debug.coverage.expectCovered()); // C (Covered)
-  main.functions[85] = () => console.log(nes.debug.coverage.expectUncovered()); // U (Uncov)
-  main.functions[86] = () => console.log(nes.debug.coverage.candidates(type, true)); // V (List)
-};
-
-main.watch = (...addrs) => new debug.WatchPanel(nes, ...addrs);
 
 const promptForNumbers = (text, callback) => {
   const numbers = prompt(text);
@@ -277,6 +314,7 @@ new Menu('NES')
     .addItem('Reset', () => main.nes.cpu.softReset());
 new Menu('Movie')
     .addItem('Playback', async () => {
+      
       if (!(main.nes.movie instanceof Playback)) {
         const file = await main.fs.pick('Select movie to play');
         main.nes.movie =

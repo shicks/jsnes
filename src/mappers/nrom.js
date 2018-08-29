@@ -375,13 +375,15 @@ export class NROM {
   // Return the address into the ROM for the given bank and memory address.  This
   // is used for reconstructing CPU logs from traces.
   prgRomAddress(bank, addr) {
-    return (bank << 13) | (addr & 0x1fff);
+    const a = (bank << 13) | (addr & 0x1fff);
+//    if (a == 0x383c6) debugger;
+    return a;
   }
 
   writeExtSavestate() {}
 
   writeSavestate() {
-    return Savestate.Mmap.of(Object.assign({
+    return Savestate.Mmap.of({
       joy1StrobeState: this.joy1StrobeState,
       joy2StrobeState: this.joy2StrobeState,
       joypadLastWrite: this.joypadLastWrite,
@@ -389,7 +391,8 @@ export class NROM {
       chrRam: this.chrRam,
       prgRom: this.prgRomSwitcher && this.prgRomSwitcher.snapshot(),
       chrRom: this.chrRomSwitcher && this.chrRomSwitcher.snapshot(),
-    }, this.writeExtSavestate()));
+      ext: this.writeExtSavestate(),
+    });
   }
 
   restoreExtSavestate(ext) {}
@@ -409,7 +412,7 @@ export class NROM {
       this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
     }
     if (mmap.ext) {
-      restoreExtSavestate(mmap.ext);
+      this.restoreExtSavestate(mmap.ext);
     }
   }
 }
