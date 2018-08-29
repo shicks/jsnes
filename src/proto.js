@@ -105,7 +105,7 @@ export class Proto {
         super(priv, byName, fields);
       }
     };
-    result.prototype.toStringTag = messageName;
+    result.prototype[Symbol.toStringTag] = messageName;
 
     Object.assign(result, nested);
     result[SPEC] = {byName, byNumber};

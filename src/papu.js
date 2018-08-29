@@ -13,7 +13,6 @@ export class PAPU {
     this.noise = null;
     this.dmc = null;
 
-    this.frameIrqCounter = null;
     this.frameIrqCounterMax = 4;
     this.frameIrqEnabled = false;
     this.frameIrqActive = null;
@@ -180,7 +179,7 @@ export class PAPU {
         this.frameIrqEnabled = false;
       }
 
-      if (this.countSequence === 0) {
+      if (!this.countSequence) {
         // NTSC:
         this.frameIrqCounterMax = 4;
         this.derivedFrameCounter = 4;
@@ -194,7 +193,7 @@ export class PAPU {
   }
 
   resetCounter() {
-    if (this.countSequence === 0) {
+    if (!this.countSequence) {
       this.derivedFrameCounter = 4;
     } else {
       this.derivedFrameCounter = 0;
@@ -223,6 +222,7 @@ export class PAPU {
       this.initCounter -= nCycles;
       if (this.initCounter <= 0) {
         this.initingHardware = false;
+        this.initCounter = 0;
       }
       return;
     }
@@ -424,7 +424,7 @@ export class PAPU {
       this.triangle.clockLinearCounter();
     }
 
-    if (this.derivedFrameCounter === 3 && this.countSequence === 0) {
+    if (this.derivedFrameCounter === 3 && !this.countSequence) {
       // Enable IRQ:
       this.frameIrqActive = true;
     }
@@ -436,7 +436,7 @@ export class PAPU {
   sample() {
     var sq_index, tnd_index;
 
-    if (this.accCount > 0) {
+    if (this.accCount) {
       this.smpSquare1 <<= 4;
       this.smpSquare1 = Math.floor(this.smpSquare1 / this.accCount);
 
@@ -606,9 +606,10 @@ class ChannelDM {
     this.shiftCounter = 0;
     this.reg4012 = 0;
     this.reg4013 = 0;
-    this.sample = 0;
     this.dacLsb = 0;
     this.data = 0;
+
+    this.sample = 0;
   }
 
   clockDmc() {
@@ -669,7 +670,7 @@ class ChannelDM {
 
   nextSample() {
     // Fetch byte:
-    this.data = this.papu.nes.mmap.load(this.playAddress);
+    this.data = this.papu.nes.cpu.load(this.playAddress);
     this.papu.nes.cpu.haltCycles(4);
 
     this.playLengthCounter--;
@@ -747,28 +748,26 @@ class ChannelNoise {
     this.papu = papu;
 
     this.isEnabled = false;
-    this.envDecayDisable = false;
-    this.envDecayLoopEnable = false;
+    this.lengthCounter = 0;
     this.lengthCounterEnable = false;
 
-    this.envReset = null;
-    this.shiftNow = false;
-
-    this.lengthCounter = 0;
     this.progTimerCount = 0;
     this.progTimerMax = 0;
-
-    this.envDecayRate = 0;
     this.envDecayCounter = 0;
+    this.envDecayDisable = false;
+    this.envDecayLoopEnable = false;
+    this.envDecayRate = 0;
+    this.envReset = false;
     this.envVolume = 0;
     this.channelVolume = 0;
+
     this.shiftReg = 1;
     this.randomBit = 0;
     this.randomMode = 0;
-    this.sampleValue = 0;
-
     this.noiseAccValue = 0;
     this.noiseAccCount = 1;
+
+    this.sampleValue = 0;
   }
 
   clockLengthCounter() {
@@ -853,6 +852,7 @@ class ChannelSquare {
     this.sqr1 = sqr1 ? 1 : 0;
 
     this.isEnabled = false;
+    this.lengthCounter = 0;
     this.lengthCounterEnable = false;
 
     this.sweepActive = false;
@@ -862,22 +862,20 @@ class ChannelSquare {
     this.sweepMode = 0;
     this.sweepShiftAmount = 0;
     this.updateSweepPeriod = null;
+    this.squareCounter = 0;
+    this.dutyMode = 0;
 
     this.progTimerCount = 0;
     this.progTimerMax = 0;
-    this.lengthCounter = 0;
-    this.squareCounter = 0;
-    this.envDecayRate = 0;
     this.envDecayCounter = 0;
     this.envDecayDisable = false;
     this.envDecayLoopEnable = false;
-    this.envReset = null;
+    this.envDecayRate = 0;
+    this.envReset = false;
     this.envVolume = 0;
-
     this.channelVolume = 0;
-    this.dutyMode = 0;
-    this.sweepResult = null;
-    this.sampleValue = null;
+
+    this.sampleValue = 0;
   }
 
   clockLengthCounter() {
@@ -1017,19 +1015,17 @@ class ChannelTriangle {
     this.papu = papu;
 
     this.isEnabled = false;
-    this.sampleCondition = false;
-    this.lcHalt = true;
-    this.lcControl = false;
-
-    this.progTimerCount = 0;
-    this.progTimerMax = 0;
-    this.triangleCounter = 0;
     this.lengthCounter = 0;
     this.lengthCounterEnable = false;
-    this.linearCounter = 0;
-    this.lcLoadValue = 0;
-    this.sampleValue = null;
+    this.progTimerCount = 0;
+    this.progTimerMax = 0;
 
+    this.lcControl = false;
+    this.lcHalt = true;
+    this.lcLoadValue = 0;
+    this.triangleCounter = 0;
+
+    this.sampleCondition = false; // Note: derived
     this.sampleValue = 0xf;
   }
 
@@ -1091,18 +1087,11 @@ class ChannelTriangle {
   }
 
   clockProgrammableTimer(nCycles) {
-    if (this.progTimerMax > 0) {
+    if (this.progTimerMax) {
       this.progTimerCount += nCycles;
-      while (
-        this.progTimerMax > 0 &&
-        this.progTimerCount >= this.progTimerMax
-      ) {
+      while (this.progTimerCount >= this.progTimerMax) {
         this.progTimerCount -= this.progTimerMax;
-        if (
-          this.isEnabled &&
-          this.lengthCounter > 0 &&
-          this.linearCounter > 0
-        ) {
+        if (this.isEnabled && this.lengthCounter && this.linearCounter) {
           this.clockTriangleGenerator();
         }
       }
@@ -1126,8 +1115,8 @@ class ChannelTriangle {
     this.sampleCondition =
       this.isEnabled &&
       this.progTimerMax > 7 &&
-      this.linearCounter > 0 &&
-      this.lengthCounter > 0;
+      this.linearCounter &&
+      this.lengthCounter;
   }
 }
 
