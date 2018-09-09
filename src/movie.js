@@ -195,6 +195,18 @@ export class Playback {
         this.recordIndex = 0;
         this.chunkIndex++;
         this.checkSkip();
+        // NOTE: if a button is pressed while saving a keyframe it is
+        // rewritten at the start of the frame.  But the button *up*
+        // is not written for buttons that aren't pressed.  This means
+        // that if we re-record a frame (by seeking backward during
+        // recording) then when we cross it during normal playback
+        // we'll never see the button-up, and the playback will break.
+        this.nes.resetControllers();
+        // TODO - failsafe in case we run into problems?
+        // if (this.chunkIndex < this.movie.chunks.length &&
+        //     this.movie.chunks[this.chunkIndex].snapshot) {
+        //   this.nes.restoreSavestate(this.movie.chunks[this.chunkIndex].snapshot);
+        // }
         continue;
       }
       const record = chunk.records[this.recordIndex];
@@ -216,10 +228,8 @@ export class Playback {
       } else if (rec.softReset) {
         this.nes.cpu.softReset();
       } else if (rec.pressed) {
-        //console.log(`playback: button down ${rec.controller+1}:${rec.button}`);
         this.nes.buttonDown(rec.controller + 1, rec.button);
       } else {
-        //console.log(`playback: button up   ${rec.controller+1}:${rec.button}`);
         this.nes.buttonUp(rec.controller + 1, rec.button);
       }
       this.framesWaited = 0;
