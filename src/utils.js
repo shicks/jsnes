@@ -75,8 +75,10 @@ export class RomBankSwitcher {
     this.cacheSize = cacheSize;
     /** @type {number} The log of the current size of each page - may decrease. */
     this.pageBits = this.windowBits;
-    /** @type {!Map<string, !TypedArray>} */
-    this.cache = new Map();
+    /** @type {!Array<!Array|!TypedArray>} */
+    this.cache = []
+    /** @type {number} */
+    this.curCacheSize = 0;
     /** @type {!Array<number>} */
     this.current = [0];
 
@@ -89,28 +91,52 @@ export class RomBankSwitcher {
 
   buffer() {
     // Check the cache.
-    const key = this.current.join(',');
-    let entry = this.cache.get(key);
-    if (entry) {
-      // update the LRU, return it
-      this.cache.delete(key);
-      this.cache.set(key, entry);
-      return entry;
+    let c = this.cache;
+    for (const b of this.current) {
+      c = c[b];
+      if (!c) break;
     }
-    // Keep the size in check.
-    if (this.cache.size >= this.cacheSize) {
-      console.log('evicting from swap cache');
-      this.cache.delete(this.cache.keys().next());
-    }
-    // Construct a new entry.
-    entry = new this.data.constructor(1 << this.windowBits);
-    for (let i = 0; i < this.current.length; i++) {
+    if (c) return c;
+    // Cache miss
+    if (this.curCacheSize >= this.cacheSize) this.cache = [];
+    c = this.cache;
+    const len = this.current.length;
+    const entry = new this.data.constructor(1 << this.windowBits);
+    for (let i = 0; i < len; i++) {
       const page = this.current[i] << this.pageBits;
       entry.set(this.data.subarray(page, page + (1 << this.pageBits)),
                 i << this.pageBits);
+      if (i < len - 1) {
+        c = c[this.current[i]] || (c[this.current[i]] = []);
+      } else {
+        c[this.current[i]] = entry;
+      }
     }
-    this.cache.set(key, entry);
     return entry;
+
+    // const key = this.current.join(',');
+    // let entry = this.cache.get(key);
+    // if (entry) {
+    //   // update the LRU, return it
+    //   //this.cache.delete(key);
+    //   //this.cache.set(key, entry);
+    //   return entry;
+    // }
+    // // Keep the size in check.
+    // if (this.cache.size >= this.cacheSize) {
+    //   console.log('evicting from swap cache');
+    //   //this.cache.delete(this.cache.keys().next());
+    //   this.cache.clear();
+    // }
+    // // Construct a new entry.
+    // entry = new this.data.constructor(1 << this.windowBits);
+    // for (let i = 0; i < this.current.length; i++) {
+    //   const page = this.current[i] << this.pageBits;
+    //   entry.set(this.data.subarray(page, page + (1 << this.pageBits)),
+    //             i << this.pageBits);
+    // }
+    // this.cache.set(key, entry);
+    // return entry;
   }
 
   swap(address, bank, size) {
@@ -149,7 +175,7 @@ export class RomBankSwitcher {
     const factor = 1 << (this.pageBits - bits)
     this.current = divideBanks(this.current, factor);
     const divideKey = (k) => divideBanks(k.split(',').map(Number), factor).join(',');
-    this.cache = new Map([...this.cache].map(([k, v]) => [divideKey(k), v]));
+    this.cache = []; //new Map([...this.cache].map(([k, v]) => [divideKey(k), v]));
     this.pageBits = bits;
   }
 }

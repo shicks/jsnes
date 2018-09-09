@@ -12,6 +12,8 @@ const STATUS_VBLANK = 0x80;
 export function PPU(nes) {
   this.nes = nes;
 
+  this.renderThisFrame = true;
+
   // Keep Chrome happy
   // Pattern tables (loaded from CHR ROM, usually)
 
@@ -774,6 +776,7 @@ PPU.prototype = {
   },
 
   renderFramePartially: function(startScan, scanCount) {
+    if (!this.renderThisFrame) return;
     if (this.f_spVisibility) {
       this.renderSpritesPartially(startScan, scanCount, SPRITE_PRIORITY_BG);
     }
@@ -810,6 +813,7 @@ PPU.prototype = {
   },
 
   renderBgScanline: function(bgbuffer, scan) {
+    if (!this.renderThisFrame) return;
     const baseTile = this.f_bgPatternTable;
     var destIndex = (scan << 8) - this.regFH;
 

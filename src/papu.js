@@ -365,10 +365,6 @@ export class PAPU {
     }
 
     var dmc = this.dmc;
-    var triangle = this.triangle;
-    var square1 = this.square1;
-    var square2 = this.square2;
-    var noise = this.noise;
 
     // Clock DMC:
     if (dmc.isEnabled) {
@@ -378,6 +374,34 @@ export class PAPU {
         dmc.clockDmc();
       }
     }
+
+    // Do the "fast version" if no sound
+    if (!this.soundEnabled) {
+      if (this.frameIrqEnabled && this.frameIrqActive) {
+        this.nes.cpu.requestIrq(this.nes.cpu.IRQ_NORMAL);
+      }
+
+      // Clock frame counter at double CPU speed:
+      this.masterFrameCounter += nCycles << 1;
+      if (this.masterFrameCounter >= this.frameTime) {
+        // 240Hz tick:
+        this.masterFrameCounter -= this.frameTime;
+        this.frameCounterTick();
+      }
+
+      // Clock sample timer:
+      this.sampleTimer += nCycles << 10;
+      if (this.sampleTimer >= this.sampleTimerMax) {
+        // Sample channels:
+        this.sampleTimer -= this.sampleTimerMax;
+      }
+      return;
+    }
+
+    var triangle = this.triangle;
+    var square1 = this.square1;
+    var square2 = this.square2;
+    var noise = this.noise;
 
     // Clock Triangle channel Prog timer:
     if (triangle.progTimerMax > 0) {
@@ -540,11 +564,14 @@ export class PAPU {
       this.square1.clockLengthCounter();
       this.square2.clockLengthCounter();
       this.noise.clockLengthCounter();
-      this.square1.clockSweep();
-      this.square2.clockSweep();
+      if (this.soundEnabled) {
+        this.square1.clockSweep();
+        this.square2.clockSweep();
+      }
     }
 
-    if (this.derivedFrameCounter >= 0 && this.derivedFrameCounter < 4) {
+    if (this.soundEnabled && this.derivedFrameCounter >= 0 &&
+        this.derivedFrameCounter < 4) {
       // Clock linear & decay:
       this.square1.clockEnvDecay();
       this.square2.clockEnvDecay();
@@ -741,7 +768,7 @@ class ChannelDM {
 
   clockDmc() {
     // Only alter DAC value if the sample buffer has data:
-    if (this.hasSample) {
+    if (this.papu.soundEnabled && this.hasSample) {
       if ((this.data & 1) === 0) {
         // Decrement delta:
         if (this.deltaCounter > 0) {
@@ -898,7 +925,7 @@ class ChannelNoise {
   clockLengthCounter() {
     if (this.lengthCounterEnable && this.lengthCounter > 0) {
       this.lengthCounter--;
-      if (this.lengthCounter === 0) {
+      if (this.lengthCounter === 0 && this.papu.soundEnabled) {
         this.updateSampleValue();
       }
     }
@@ -928,7 +955,7 @@ class ChannelNoise {
   }
 
   updateSampleValue() {
-    if (this.papu.soundEnabled && this.isEnabled && this.lengthCounter > 0) {
+    if (this.isEnabled && this.lengthCounter > 0) {
       this.sampleValue = this.randomBit * this.channelVolume;
     }
   }
@@ -963,7 +990,9 @@ class ChannelNoise {
     if (!value) {
       this.lengthCounter = 0;
     }
-    this.updateSampleValue();
+    if (this.papu.soundEnabled) {
+      this.updateSampleValue();
+    }
   }
 
   getLengthStatus() {
@@ -1005,7 +1034,7 @@ class ChannelSquare {
   clockLengthCounter() {
     if (this.lengthCounterEnable && this.lengthCounter > 0) {
       this.lengthCounter--;
-      if (this.lengthCounter === 0) {
+      if (this.lengthCounter === 0 && this.papu.soundEnabled) {
         this.updateSampleValue();
       }
     }
@@ -1063,7 +1092,7 @@ class ChannelSquare {
   }
 
   updateSampleValue() {
-    if (this.papu.soundEnabled && this.isEnabled && this.lengthCounter > 0 &&
+    if (this.isEnabled && this.lengthCounter > 0 &&
         this.progTimerMax > 7) {
       if (
         this.sweepMode === 0 &&
@@ -1094,7 +1123,9 @@ class ChannelSquare {
       } else {
         this.channelVolume = this.envVolume;
       }
-      this.updateSampleValue();
+      if (this.soundEnabled) {
+        this.updateSampleValue();
+      }
     } else if (address == 1) {
       // Sweep:
       this.sweepActive = (value & 0x80) !== 0;
@@ -1124,7 +1155,9 @@ class ChannelSquare {
     if (!value) {
       this.lengthCounter = 0;
     }
-    this.updateSampleValue();
+    if (this.papu.soundEnabled) {
+      this.updateSampleValue();
+    }
   }
 
   getLengthStatus() {

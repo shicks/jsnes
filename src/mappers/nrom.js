@@ -205,7 +205,7 @@ export class NROM {
     if (this.nes.rom.vrom.length) {
       this.nes.ppu.importChrRom(this.nes.rom.vrom);
       this.chrRomSwitcher =
-          new utils.RomBankSwitcher(this.nes.ppu.patternTableFull, 0x2000);
+          new utils.RomBankSwitcher(this.nes.ppu.patternTableFull, 0x2000, 512);
     } else {
       this.chrRam = new Uint16Array(0x2000);
       this.nes.ppu.patternTableFull = this.nes.ppu.patternTable = this.chrRam;

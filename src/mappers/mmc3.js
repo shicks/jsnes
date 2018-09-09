@@ -77,18 +77,21 @@ export class MMC3 extends NROM {
   updateBanks() {
     const chrInvert = this.bankSelect & BANK_SELECT_CHR_INVERTED ? 0x1000 : 0;
     const prgInvert = this.bankSelect & BANK_SELECT_CHR_INVERTED ? 0x4000 : 0;
-    this.loadChrPages(
-        [0x0000 ^ chrInvert, this.banks[0] >>> 1, 0x0800],
-        [0x0800 ^ chrInvert, this.banks[1] >>> 1, 0x0800],
-        [0x1000 ^ chrInvert, this.banks[2], 0x0400],
-        [0x1400 ^ chrInvert, this.banks[3], 0x0400],
-        [0x1800 ^ chrInvert, this.banks[4], 0x0400],
-        [0x1c00 ^ chrInvert, this.banks[5], 0x0400]);
-    this.loadPrgPages(
-        [0x8000 ^ prgInvert, this.banks[6], 0x2000],
-        [0xa000,             this.banks[7], 0x2000],
-        [0xc000 ^ prgInvert, -2,            0x2000],
-        [0xe000,             -1,            0x2000]);
+    if (!this.nes.ppu.usingChrRam) {
+      this.nes.ppu.triggerRendering();
+      this.chrRomSwitcher.swap(0x0000 ^ chrInvert, this.banks[0] >>> 1, 0x0800);
+      this.chrRomSwitcher.swap(0x0800 ^ chrInvert, this.banks[1] >>> 1, 0x0800);
+      this.chrRomSwitcher.swap(0x1000 ^ chrInvert, this.banks[2], 0x0400);
+      this.chrRomSwitcher.swap(0x1400 ^ chrInvert, this.banks[3], 0x0400);
+      this.chrRomSwitcher.swap(0x1800 ^ chrInvert, this.banks[4], 0x0400);
+      this.chrRomSwitcher.swap(0x1c00 ^ chrInvert, this.banks[5], 0x0400);
+      this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
+    }
+    this.prgRomSwitcher.swap(0x0000 ^ prgInvert, this.banks[6], 0x2000);
+    this.prgRomSwitcher.swap(0x2000,             this.banks[7], 0x2000);
+    this.prgRomSwitcher.swap(0x4000 ^ prgInvert, -2,            0x2000);
+    this.prgRomSwitcher.swap(0x6000,             -1,            0x2000);
+    this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
   }
 
   clockIrqCounter() {

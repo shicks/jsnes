@@ -73,6 +73,8 @@ class Main {
 
     this.frameTimer = new FrameTimer({
       onGenerateFrame: () => {
+        this.nes.papu.soundEnabled = this.speakers.enabled;
+        this.nes.ppu.renderThisFrame = true;
         this.nes.frame();
       },
       onWriteFrame: () => {
@@ -83,6 +85,7 @@ class Main {
         }
       },
       onSkipFrame: () => {
+        this.nes.papu.soundEnabled = this.nes.ppu.renderThisFrame = false;
         this.nes.frame();
       },
     });

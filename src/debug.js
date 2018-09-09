@@ -159,6 +159,12 @@ export class Debug {
     }
   }
 
+  clearTrace() {
+    this.buffer.fill(0);
+    this.reset = 0;
+    this.pos = 0;
+  }
+
   resetTrace() {
     while (this.pos < this.buffer.length) {
       this.buffer[this.pos++] = 0;
@@ -1118,7 +1124,7 @@ Debug.Fast = class {
 
   logCpu() {}
   logMem() {}
-  logScaline() {}
+  logScanline() {}
   logInterrupt() {}
 };
 

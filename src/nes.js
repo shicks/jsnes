@@ -47,7 +47,7 @@ export class NES {
     this.mmap = null; // set in loadROM()
     this.controllers = {
       1: new Controller(),
-      2: new Controller()
+      2: new Controller(),
     };
 
     this.ui.updateStatus("Ready to load a ROM.");
@@ -293,5 +293,9 @@ export class NES {
     this.papu.reset();
     // TODO - if paused, update the screen with the stored screenshot???
     // TODO - loadROM(this.romData) or s.romData?  reloadROM()?
+  }
+
+  disableDebugging() {
+    this.debug = new Debug.Fast();
   }
 }
