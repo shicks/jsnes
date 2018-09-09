@@ -215,6 +215,10 @@
   position: absolute;
   right: 1em;
 }
+.file-picker > .file > .download {
+  position: absolute;
+  right: 2.4em;
+}
 
 .controller > div {
   margin: 3px 0;

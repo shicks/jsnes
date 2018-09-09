@@ -415,4 +415,10 @@ export class NROM {
       this.restoreExtSavestate(mmap.ext);
     }
   }
+
+  clearCache() {
+    if (this.prgRomSwitcher) this.prgRomSwitcher.cache.clear();
+    if (this.chrRomSwitcher) this.chrRomSwitcher.cache.clear();
+    this.restoreSavestate(this.writeSavestate());
+  }
 }

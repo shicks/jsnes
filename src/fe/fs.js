@@ -37,6 +37,9 @@ class Picker extends Component {
       const line = child(this.element, 'div', 'file');
       line.textContent = `${size.toString(10).padStart(9)} ${name}`;
       line.dataset.name = name;
+      const dl = child(line, 'span', 'download');
+      dl.textContent = 'v';
+      dl.dataset.name = name;
       const del = child(line, 'span', 'delete');
       del.textContent = 'x';
       del.dataset.name = name;
@@ -60,16 +63,20 @@ class Picker extends Component {
     // return a new empty file
     this.addCornerButton('+', () => {
       const name = window.prompt('filename');
-      resolve({name, data: new Uint8Array(0)});
+      resolve({name, data: new Uint8Array(0), new: true});
       super.remove();
     });
     this.element.addEventListener('click', (e) => {
-      if (!e.target.dataset.name) return;
+      const name = e.target.dataset.name;
+      if (!name) return;
       if (e.target.classList.contains('delete')) {
+        // TODO - prompt to confirm?
         e.target.parentElement.remove();
-        this.fs.delete(e.target.dataset.name);
+        this.fs.delete(name);
+      } else if (e.target.classList.contains('download')) {
+        this.fs.open(name).then(({data}) => download(data, name));
       } else {
-        resolve({name: e.target.dataset.name});
+        resolve({name});
         super.remove();
       }
     });
@@ -115,7 +122,7 @@ export class FileSystem {
     }).then((file) => {
       if (file.data) {
         // uploaded - store it
-        this.save(file.name, file.data);
+        if (!file.new) this.save(file.name, file.data);
         return file;
       } else {
         // picked, fetch it
@@ -226,4 +233,17 @@ function request(req) {
     req.onerror = fail;
     req.onsuccess = (e) => ok(e.target.result);
   });
+}
+
+function download(data, name) {
+  const a = document.createElement("a");
+  document.body.appendChild(a);
+  a.style = "display: none";
+  const blob = new Blob([data], {type: "octet/stream"}),
+        url = window.URL.createObjectURL(blob);
+  a.href = url;
+  a.download = name;
+  a.click();
+  window.URL.revokeObjectURL(url);
+  a.remove();
 }

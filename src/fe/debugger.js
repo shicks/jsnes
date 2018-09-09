@@ -126,6 +126,10 @@ export class Trace extends Component {
     this.size = 0;
     this.top = null;
     this.current = null;
+
+    this.registerKey('f', 'Advance Frame', () => this.advanceFrame());
+    this.registerKey('t', 'Advance Tile Row', () => this.advanceTileRow());
+    this.registerKey('g', 'Step', () => this.advance(1));
   }
 
   clearDom() {
@@ -141,6 +145,18 @@ export class Trace extends Component {
 
   advance(cycles) {
     this.nes.debug.breakIn = cycles;
+    this.start();
+  }
+
+  advanceFrame() {
+    this.nes.debug.breakAtScanline = -1;
+    this.start();
+  }
+  
+  advanceTileRow() {
+    this.nes.debug.breakAtScanline =
+        this.nes.ppu.scanline < 20 || this.nes.ppu.scanline > 260 ?
+            0 : this.nes.ppu.scanline - 13;
     this.start();
   }
 
@@ -236,11 +252,10 @@ export class PatternTableViewer extends Component {
 
   getTile(table, row, col, tileRow, colors) {
     const addr = (table << 12) | (row << 8) | (col << 4) | tileRow;
-    this.getTileInternal(this.nes.ppu.patternTable, addr, colors);
+    this.getTileInternal(this.nes.ppu.patternTable[addr], colors);
   }
 
-  getTileInternal(ram, addr, colors) {
-    let line = ram[addr];
+  getTileInternal(line, colors) {
     for (let bit = 7; bit >= 0; bit--) {
       colors[bit] = this.palette[line & 3];
       line >>>= 2;
@@ -318,20 +333,22 @@ export class ChrRomViewer extends PatternTableViewer {
     this.pages = pages;
   }
 
-  getTile(table, row, col, tileRow, data) {
+  getTile(table, row, col, tileRow, colors) {
     // support up to 8 different pages
     const bankIndex = (table << 2) | (row >>> 2);
     if (bankIndex >= this.pages.length) {
-      for (let i = 0; i < 8; i++) data[i] = 0xffffff;
+      for (let i = 0; i < 8; i++) this.getTileInternal(0, colors);
       return;
     }
 
     const bank = this.pages[bankIndex];
-    const bankNum = bank >>> 2;
-    const addr = (bank % 4) << 10 | ((row & 3) << 8) | (col << 4) | tileRow;
-    this.getTileInternal(
-        this.nes.ppu.patternTableFull.subArray(bankNum, bankNum + 0x400),
-        addr, data);
+    const addr = (bank << 10) | ((row & 3) << 8) | (col << 4) | tileRow;
+    this.getTileInternal(this.nes.ppu.patternTableFull[addr], colors);
+    // const bankNum = bank >>> 2;
+    // const addr = (bank % 4) << 10 | ((row & 3) << 8) | (col << 4) | tileRow;
+    // this.getTileInternal(
+    //     this.nes.ppu.patternTableFull.subarray(bankNum, bankNum + 0x400),
+    //     addr, data);
   }
 }
 
@@ -377,6 +394,12 @@ class MoviePanel extends Component {
 
     this.updateKeyframe();
     this.frame();
+
+    this.registerKey('w', 'Seek', () => this.seekToKeyframe());
+    this.registerKey('{', 'Previous Keyframe',
+                     () => this.selectKeyframe(this.currentKeyframe - 1));
+    this.registerKey('}', 'Next Keyframe',
+                     () => this.selectKeyframe(this.currentKeyframe + 1));
   }
 
   areKeyframesStale() {} // abstract: returns true if we need to recache
@@ -458,7 +481,7 @@ export class PlaybackPanel extends MoviePanel {
   areKeyframesStale() {
     if (this.nes.movie != this.movie) {
       // changed the playback on us - refresh keyframes, etc
-      this.movie = this.nes.playback;
+      this.movie = this.nes.movie;
       return true;
     }
     return false;
@@ -504,6 +527,9 @@ export class RecordPanel extends MoviePanel {
     text(this.top, ' ');
     link(this.top, '[cancel]', () => this.cancel());
     this.saveButton.style.display = 'none';
+
+    this.registerKey('q', 'Save New Keyframe',
+                     () => this.movie.keyframe(this.nes.writeSavestate()));
   }
 
   areKeyframesStale() {
@@ -512,9 +538,8 @@ export class RecordPanel extends MoviePanel {
       this.movie = this.nes.movie;
       return true;
     }
-    return this.keyframes.length &&
-        this.movie.isLastKeyframeStale(
-            this.keyframes[this.keyframes.length - 1]);
+    return this.movie.isLastKeyframeStale(
+        this.keyframes[this.keyframes.length - 1]);
   }
 
   isActive() {
@@ -531,6 +556,12 @@ export class RecordPanel extends MoviePanel {
     this.saveButton.style.display = 'inline';
     this.startButton.style.display = 'none';
   }
+
+  seekToKeyframe() {
+    super.seekToKeyframe(); // starts recording automatically!
+    this.saveButton.style.display = 'inline';
+    this.startButton.style.display = 'none';
+  }    
 
   async save() {
     this.fs.save(this.filename, this.movie.save());

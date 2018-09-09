@@ -100,13 +100,8 @@ export class NES {
     var cpu = this.cpu;
     var ppu = this.ppu;
     var papu = this.papu;
-let buf=[];try{
     FRAMELOOP: for (;;) {
-//13748
-const pr=false;//this.ppu.frame == 13253 && this.ppu.scanline < 23 || this.ppu.frame==13252 || this.ppu.frame == 13251 && this.ppu.scanline > 250;
-if(pr)buf.push(`${this.ppu.frame.toString(16)}: scanline ${this.ppu.scanline} curX ${this.ppu.curX} PC ${this.cpu.REG_PC.toString(16)}`);
       if (this.debug.break) {
-if(pr)buf.push(`  break`);
         this.debug.break = false;
         this.breakpointCycles = cycles;
         this.opts.onBreak(true);
@@ -115,13 +110,11 @@ if(pr)buf.push(`  break`);
       if (cpu.cyclesToHalt === 0) {
         // Execute a CPU instruction
         cycles = cpu.emulate();
-if(pr)buf.push(`  execute => cycles ${cycles}`);
         if (emulateSound) {
           papu.clockFrameCounter(cycles);
         }
         cycles *= 3;
       } else {
-if(pr)buf.push(`  halt ${cpu.cyclesToHalt}`);
         if (cpu.cyclesToHalt > 8) {
           cycles = 24;
           if (emulateSound) {
@@ -135,7 +128,6 @@ if(pr)buf.push(`  halt ${cpu.cyclesToHalt}`);
           }
           cpu.cyclesToHalt = 0;
         }
-if(pr)buf[buf.length-1] += ` => cycles ${cycles}`;
       }
 
       for (; cycles > 0; cycles--) {
@@ -149,7 +141,6 @@ if(pr)buf[buf.length-1] += ` => cycles ${cycles}`;
         }
 
         if (ppu.nmiCounter) {
-if(pr)buf.push(`requestEndFrame nmiCounter ${ppu.nmiCounter}`);
           if (--ppu.nmiCounter === 0) {
             ppu.startVBlank();
             // NOTE: we're dropping cycles on the floor here,
@@ -161,7 +152,6 @@ if(pr)buf.push(`requestEndFrame nmiCounter ${ppu.nmiCounter}`);
         }
 
         if (++ppu.curX === 341) {
-if(pr)buf.push(`endScanline ${ppu.scanline}`);
           ppu.endScanline();
           this.debug.logScanline(ppu.scanline, ppu.frame);
         }
@@ -182,7 +172,6 @@ if(pr)buf.push(`endScanline ${ppu.scanline}`);
       this.opts.onBreak(false);
     }
     this.fpsFrameCount++;
-}finally{if(buf.length)console.log(buf.join('\n'));}
   }
 
   resetControllers() {
@@ -289,9 +278,7 @@ if(pr)buf.push(`endScanline ${ppu.scanline}`);
     if (this.breakpointCycles != null) {
       data.partial = {breakpointCycles: this.breakpointCycles};
     }
-    const savestate = Savestate.of(data).serialize('NES-STA\x1a');
-    if (this.movie instanceof Recorder) this.movie.keyframe(savestate);
-    return savestate;
+    return Savestate.of(data).serialize('NES-STA\x1a');
   }
 
   restoreSavestate(buffer) {

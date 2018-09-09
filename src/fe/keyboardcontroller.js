@@ -28,14 +28,6 @@ export class KeyboardController {
   constructor(main) {
     this.main = main;
 
-    main.functions = main.functions || {};
-    main.functions[80] = (main) => main.handlePauseResume(),  // P (Pause)
-    main.functions[70] = (main) => main.advanceFrame(),  // F (Frame)
-    main.functions[84] = (main) => main.advanceTileRow(),  // T (Tile Row)
-    main.functions[71] = (main) => main.advance(1),  // G (Step)
-    main.functions[81] = (main) => main.saveSnapshot(), // Q (Save)
-    main.functions[87] = (main) => main.loadSnapshot(), // W (Load)
-
     document.addEventListener("keydown", (e) => this.handleKeyDown(e));
     document.addEventListener("keyup", (e) => this.handleKeyUp(e));
     document.addEventListener("keypress", (e) => this.handleKeyPress(e));
@@ -56,11 +48,7 @@ export class KeyboardController {
     if (key) {
       this.main.nes.buttonUp(key[0], key[1]);
       e.preventDefault();
-      return;
-    }
-    const func = main.functions && main.functions[e.keyCode];
-    if (func) {
-      func(this.main);
+    } else if (this.main.handleKey(e)) {
       e.preventDefault();
     }
   }

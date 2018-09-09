@@ -78,9 +78,8 @@ class Main {
       onWriteFrame: () => {
         this.screen.writeBuffer();
         this.gamepadController.update();
-        for (const el of document.querySelectorAll('#grid > .component')) {
-          const component = Component.map.get(el);
-          if (component) component.frame();
+        for (const component of this.components()) {
+          component.frame();
         }
       },
       onSkipFrame: () => {
@@ -186,13 +185,13 @@ class Main {
     this.speakers.stop();
     clearInterval(this.fpsInterval);
     let trace;
-    for (const el of document.querySelectorAll('#grid > .component')) {
-      // for now, just auto-create the Trace component if it's not there.
-      const component = Component.map.get(el);
-      if (component instanceof debug.Trace) trace = component;
-      if (component) component.step();
+    for (const component of this.components()) {
+      // if (component instanceof debug.Trace) trace = component;
+      component.step();
     }
-    if (!trace) new debug.Trace(this.nes, () => this.start()).step();
+    // TODO - consider not bringing this up automatically?
+    // instead find a different way to indicate we're paused?
+    //if (!trace) new debug.Trace(this.nes, () => this.start()).step();
   }
 
   handlePauseResume() {
@@ -201,23 +200,6 @@ class Main {
     } else {
       this.stop();
     }
-  }
-
-  advanceFrame() {
-    this.nes.debug.breakAtScanline = -1;
-    this.start();
-  }
-  
-  advanceTileRow() {
-    this.nes.debug.breakAtScanline =
-        this.nes.ppu.scanline < 20 || this.nes.ppu.scanline > 260 ?
-            0 : this.nes.ppu.scanline - 13;
-    this.start();
-  }
-
-  advance(instructions = 100) {
-    this.nes.debug.breakIn = instructions;
-    this.start();
   }
 
   partialRender() {
@@ -250,7 +232,7 @@ class Main {
     //main.speakers.clear();
     this.nes.restoreSavestate(window.snapshot);
     // setTimeout(() => main.speakers.start(), window.TIME || 0);
-  };
+  }
 
   async startPlayback(file = undefined) {
     if (typeof file == 'string') {
@@ -264,6 +246,17 @@ class Main {
       this.nes.movie.start();
     }
     return new debug.PlaybackPanel(this.nes);
+  }
+
+  handleKey(e) {
+    if (e.key == 'p') {
+      this.handlePauseResume();
+      return true;
+    }
+    for (const component of this.components()) {
+      if (component.handleKey(e)) return true;
+    }
+    return false;
   }
 
   // TODO - save snapshots to local storage
@@ -286,6 +279,14 @@ class Main {
 
   watch(...addrs) {
     new debug.WatchPanel(this.nes, ...addrs);
+  }
+
+  * components() {
+    for (const el of document.querySelectorAll('#grid > .component')) {
+      // for now, just auto-create the Trace component if it's not there.
+      const component = Component.map.get(el);
+      if (component) yield component;
+    }
   }
 }
 
@@ -318,22 +319,27 @@ new Menu('Movie')
       if (!(main.nes.movie instanceof Playback)) {
         const file = await main.fs.pick('Select movie to play');
         main.nes.movie =
-            new Playback(main.nes, file.data, () => main.stop());
+            new Playback(main.nes, file.data, {onStop: () => main.stop()});
         main.nes.movie.start();
       }
       new debug.PlaybackPanel(main.nes);
     })
     .addItem('Record', async () => {
       const file = await main.fs.pick('Select movie to record');
-      const movie = file.data ? Movie.parse(file.data) : undefined;
+      const movie = file.data && file.data.length ?
+          Movie.parse(file.data, 'NES-MOV\x1a') : undefined;
       if (!(main.nes.movie instanceof Recorder) || movie) {
         main.nes.movie = new Recorder(main.nes, movie);
-        //main.nes.recorder.start();
+        //main.nes.movie.start();
+      }
+      if (movie) {
+        // TODO - seek to last keyframe, pause emulation to continue recording.
       }
       new debug.RecordPanel(main, file.name);
     });
 
 new Menu('Debug')
+    .addItem('Trace', () => new debug.Trace(main.nes, () => main.start()).step())
     .addItem('Watch Page', () => promptForNumbers('Pages', pages => {
       for (const page of pages) new debug.WatchPage(main.nes, page);
     }))

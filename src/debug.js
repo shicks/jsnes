@@ -71,6 +71,24 @@ import {opdata, opmeta} from './opdata.js';
 // the selector at the END of the log entry.
 
 
+// Once we've got a full movie, consider paring down the debugger and rederer to see
+// how fast we can get the framerate with no rendering - see if we can play through the
+// whole game in half an hour?
+//   - save snapshots every 5 minutes, keep track of first frame certain things happen
+// complete movie logs
+//   (1) code vs data vs either - jump tables, maybe?
+//   (2) read/write locations for each memory address?
+//       - build a larger array with 16 entries for each address
+//       - how to handle duplicates efficiently?  hash the (address x PC) and skip if
+//         already seen??  Or just use a set with the whole thing shifted together...
+//         - should be pretty efficient already - reads.add(pc * 65536 + addr)
+//   (3) call and jump sources - just record it whenever we see the opcode regardless
+//       of whether it was actually taken.  Again, we can just mash the addresses
+//       together - for indirect jumps via RAM, need a little extra logic...
+//   (4) page tracker - any time an instruction reads or jumps to an absolute
+//       address >= $8000, store the actual address (note: could be multiple)
+
+
 //const BYTES_BY_MODE = [2, 2, 1, 3, 1, 2, 2, 2, 3, 3, 2, 3, 3];
 
 export class Debug {
@@ -211,6 +229,7 @@ export class Debug {
                                 (op & MEM_READ ? BREAK_RAM_R : 0) |
                                 (op & MEM_WRITE ? BREAK_RAM_W : 0));
 
+    // helper for comparing traces to find emulation bugs e.g. after snapshot restores
     if (this.compare && this.compare.has(address)) {
       const map = this.compare.get(address);
       const ppu = this.nes.ppu;
@@ -270,7 +289,8 @@ export class Debug {
         // NOTE: this can give the wrong PC immediately
         // after jumps?
         console.log(`break on read ${bank ? 'PRG' : 'RAM'} $${
-                     (addr + 1).toString(16)} at ${this.banked(this.lastPc)}`);
+                     (addr + 1).toString(16)} (${value.toString(!6)}) at ${
+                     this.banked(this.lastPc)}`);
         this.break = true;
       }
     }
@@ -356,7 +376,8 @@ export class Debug {
    * @param {!TracePosition|number=} count
    * @return {!TracePosition} Position at end.
    */
-  visitLog({cpu, mem, scanline, interrupt, elided} = {}, end = undefined, start = 0x400) {
+  visitLog({cpu, mem, scanline, interrupt, elided} = {},
+           end = undefined, start = 0x400, reverse = false) {
     if (!end) end = this.tracePosition();
     if (!end.isValid()) return end;
     if (!(start instanceof TracePosition)) {
@@ -373,7 +394,7 @@ export class Debug {
     let currentFrame = end.frame;
     let currentScanline = end.scanline;
 
-    const entries = [];
+    let entries = [];
 
     // Work backwards, from most to least recent
     for (;;) {
@@ -398,9 +419,12 @@ export class Debug {
       }
       pos -= len - 1;
     }
-    scanline && scanline(currentScanline, currentFrame);
+    // TODO - handle reverse corectly?
+    let d = scanline && scanline(currentScanline, currentFrame);
+    if (d && d.done) return end;
 
     // Iterate backwards over entries, forward in time
+    if (reverse) entries = entries.reverse();
     for (let i = entries.length - 1; i >= 0; i--) {
       let pos = entries[i];
       const selector = this.buffer[--pos];
@@ -417,7 +441,11 @@ let bank = null;
 
 if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, pos+5).map(x=>x.toString(16)), addr, bank, romaddr);
 
-        cpu && cpu(op, addr, romaddr);
+        d = cpu && cpu(op, addr, romaddr);
+        if (d && d.done) {
+          return new TracePosition(
+              this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+        }
         break;
       }
       case 2: { // mem
@@ -431,25 +459,45 @@ if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, pos+5).map(x=>x.toString
                     (selector & MEM_WORD ? this.buffer[--pos] << 8 : 0) :
                 undefined;
         const write = selector & MEM_WRITE ? this.buffer[--pos] : undefined;
-        mem && mem(addr, romaddr, read, write);
+        d = mem && mem(addr, romaddr, read, write);
+        if (d && d.done) {
+          return new TracePosition(
+              this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+        }
         break;
       }
       case 3: { // other
         switch (selector) {
         case Debug.VBLANK:
           const frame = this.buffer[--pos] | (this.buffer[--pos] << 8);
-          scanline && scanline(-1, frame);
+          d = scanline && scanline(-1, frame);
+          if (d && d.done) {
+            return new TracePosition(
+                this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+          }
           break;
         case Debug.SCANLINE:
-          scanline && scanline(this.buffer[--pos]);
+          d = scanline && scanline(this.buffer[--pos]);
+          if (d && d.done) {
+            return new TracePosition(
+                this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+          }
           break;
         case Debug.IRQ:
         case Debug.NMI:
         case Debug.RESET:
-          interrupt && interrupt(selector);
+          d = interrupt && interrupt(selector);
+          if (d && d.done) {
+            return new TracePosition(
+                this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+          }
           break;
         case Debug.ELIDED:
-          elided && elided();
+          d = elided && elided();
+          if (d && d.done) {
+            return new TracePosition(
+                this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+          }
           break;
         }
         break;
@@ -532,6 +580,7 @@ return;
 
   patchRom(addr, value) {
     this.nes.rom.rom[addr] = value;
+    this.nes.mmap.clearCache();
   }
 
   memTracker() {
@@ -544,6 +593,29 @@ return;
 
   origins(destination) {
     return this.origin.origins(destination);
+  }
+
+  whoWrote(address, endPos = this.tracePosition()) {
+    let lastpc = -1;
+    let frame = -1;
+    let scanline = -1;
+    return this.visitLog({
+      cpu: (op, addr, romaddr) => {
+        if (romaddr) lastpc = romaddr;
+      },
+      mem: (addr, romaddr, read, write) => {
+        if (addr == address && write != null) {
+          console.log(`$${lastpc.toString(16).padStart(5, 0)}: ${
+              address.toString(16).padStart(4, 0)} <- ${write.toString(16)
+              } at frame ${frame.toString(16)}:${scanline.toString(16).padStart(2, 0)}`);
+          return {done: true};
+        }
+      },
+      scanline: (newScanline, newFrame) => {
+        if (newFrame) { frame = newFrame - 1; scanline = 0xf0; }
+        if (newScanline) scanline = newScanline - 1;
+      },
+    }, undefined, Infinity, /* reverse= */ true);
   }
 }
 
@@ -1034,8 +1106,21 @@ Debug.WatchOld = class {
     }
     setTimeout(() => this.check(watching), 30);
   }
-}
+};
 
+
+// Base class for faster run-throughs.  We can extend it with very targetted
+// functionality to complete a playback more quickly than we could otherwise.
+Debug.Fast = class {
+  constructor() {
+    this.break = false;
+  }
+
+  logCpu() {}
+  logMem() {}
+  logScaline() {}
+  logInterrupt() {}
+};
 
 const selectorLength = (selector) => {
   switch (selector & 3) {

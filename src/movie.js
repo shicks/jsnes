@@ -142,6 +142,39 @@ export class Playback {
     return result;
   }
 
+  // Workaround for bug where "load savestate" during movie recording
+  // didn't keep track of the load - we should have done a "seek" but
+  // instead we just kept on recording even though the state of the
+  // emulator was completely changed from under us.  We should remove
+  // this code and instead fix up any old movies, but for now it's a
+  // start.
+  checkSkip() {
+    const thisChunk = this.movie.chunks[this.chunkIndex];
+    const nextChunk = this.movie.chunks[this.chunkIndex + 1];
+    if (!(thisChunk && thisChunk.snapshot && nextChunk && nextChunk.snapshot)) {
+      return;
+    }
+    let frames = thisChunk.frames +
+        Savestate.parse(thisChunk.snapshot, 'NES-STA\x1a').ppu.timing.frame -
+        Savestate.parse(nextChunk.snapshot, 'NES-STA\x1a').ppu.timing.frame;
+    if (!frames) return;
+    frames += window.SKIP_DELTA && window.SKIP_DELTA[this.chunkIndex] || 0;
+    console.log(`Skipping ${frames} frames to patch savestate recording bug`);
+
+    frames += this.framesWaited;
+    this.framesFromStart -= this.framesWaited;
+    this.framesWaited = 0;
+    let rec = this.peekRecord();
+    while (rec && rec.frames < frames) {
+      frames -= rec.frames;
+      this.framesFromStart += rec.frames;
+      this.recordIndex++;
+      rec = this.peekRecord();
+    }
+    this.framesFromStart += frames;
+    this.framesWaited = frames;
+  }
+
   seek(keyframe) {
     checkState(keyframe.movie == this, 'invalid keyframe');
     this.chunkIndex = keyframe.index;
@@ -151,6 +184,8 @@ export class Playback {
     this.playing = true;
     this.nes.resetControllers();
     this.nes.restoreSavestate(this.movie.chunks[keyframe.index].snapshot);
+    // attempted workaround to fix buggy movies...?
+    this.checkSkip();
   }
 
   peekRecord() {
@@ -159,6 +194,7 @@ export class Playback {
       if (this.recordIndex >= chunk.records.length) {
         this.recordIndex = 0;
         this.chunkIndex++;
+        this.checkSkip();
         continue;
       }
       const record = chunk.records[this.recordIndex];
@@ -322,6 +358,7 @@ export class Recorder {
   }
 
   isLastKeyframeStale(keyframe) {
+    if (!keyframe) return !!this.lastSnapshot;
     if (this.lastSnapshot) return keyframe.index != this.chunks.length;
     for (let i = this.chunks.length - 1; i >= 0; i--) {
       if (this.chunks[i].snapshot) return keyframe.index != i;
@@ -350,7 +387,8 @@ export class Recorder {
 
   seek(keyframe) {
     checkState(keyframe.movie == this, 'invalid keyframe');
-    const savestate = this.chunks[keyframe.index].snapshot;
+    const savestate = keyframe.index < this.chunks.length ?
+        this.chunks[keyframe.index].snapshot : this.lastSnapshot;
     this.nes.restoreSavestate(savestate);
     this.lastSnapshot = savestate;
     this.chunks.splice(keyframe.index, this.chunks.length - keyframe.index);
@@ -363,7 +401,9 @@ export class Recorder {
   }
 
   getImage(chunkIndex) {
-    return (chunkIndex < this.chunks.length ?
-            this.chunks[chunkIndex].snapshot : this.lastSnapshot).screen;
+    return Savestate.parse(
+        chunkIndex < this.chunks.length ?
+            this.chunks[chunkIndex].snapshot : this.lastSnapshot,
+        'NES-STA\x1a').screen;
   }
 }

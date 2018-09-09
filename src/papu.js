@@ -7,6 +7,7 @@ var CPU_FREQ_NTSC = 1789772.5; //1789772.72727272d;
 export class PAPU {
   constructor(nes) {
     this.nes = nes;
+    this.soundEnabled = true; // whether to actually calculate samples
 
     this.square1 = null;
     this.square2 = null;
@@ -387,7 +388,7 @@ export class PAPU {
           triangle.triangleCounter++;
           triangle.triangleCounter &= 0x1f;
 
-          if (triangle.isEnabled) {
+          if (triangle.isEnabled && this.soundEnabled) {
             if (triangle.triangleCounter >= 0x10) {
               // Normal value.
               triangle.sampleValue = triangle.triangleCounter & 0xf;
@@ -488,6 +489,7 @@ export class PAPU {
 
   accSample(cycles) {
     // Special treatment for triangle channel - need to interpolate.
+    if (!this.soundEnabled) return;
     let triValue = 0;
     if (this.triangle.sampleCondition) {
       triValue = Math.floor(
@@ -560,6 +562,7 @@ export class PAPU {
 
   // Samples the channels, mixes the output together, then writes to buffer.
   sample() {
+    if (!this.soundEnabled) return;
     var sq_index, tnd_index;
 
     if (this.accCount) {
@@ -605,8 +608,8 @@ export class PAPU {
     if (tnd_index >= TND_TABLE.length) {
       tnd_index = TND_TABLE.length - 1;
     }
-   var sampleValueL =
-      SQUARE_TABLE[sq_index] + TND_TABLE[tnd_index] - DC_VALUE;
+    var sampleValueL =
+        SQUARE_TABLE[sq_index] + TND_TABLE[tnd_index] - DC_VALUE;
 
     // Right channel:
     sq_index =
@@ -925,7 +928,7 @@ class ChannelNoise {
   }
 
   updateSampleValue() {
-    if (this.isEnabled && this.lengthCounter > 0) {
+    if (this.papu.soundEnabled && this.isEnabled && this.lengthCounter > 0) {
       this.sampleValue = this.randomBit * this.channelVolume;
     }
   }
@@ -1060,7 +1063,8 @@ class ChannelSquare {
   }
 
   updateSampleValue() {
-    if (this.isEnabled && this.lengthCounter > 0 && this.progTimerMax > 7) {
+    if (this.papu.soundEnabled && this.isEnabled && this.lengthCounter > 0 &&
+        this.progTimerMax > 7) {
       if (
         this.sweepMode === 0 &&
         this.progTimerMax + (this.progTimerMax >> this.sweepShiftAmount) > 4095
