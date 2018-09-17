@@ -1,4 +1,5 @@
 import {Controller} from '../controller.js';
+import {Debug} from '../debug.js';
 import {NES} from '../nes.js';
 import {Playback, Recorder, Movie} from '../movie.js';
 import {Screen} from './screen.js';
@@ -9,6 +10,7 @@ import {FrameTimer} from './frametimer.js';
 import * as debug from './debugger.js';
 import {Component} from './component.js';
 import {FileSystem} from './fs.js';
+
 import {Menu} from './menu.js';
 
 const bufferLog = () => {}; console.log.bind(console);
@@ -70,6 +72,7 @@ class Main {
         //          btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
       },
     });
+    if (!this.getHash('nodebug')) this.nes.debug = new Debug(this.nes);
 
     this.frameTimer = new FrameTimer({
       onGenerateFrame: () => {
@@ -293,7 +296,7 @@ class Main {
   }
 }
 
-window.snapshot;
+window.Debug = Debug;
 window.main = new Main(document.getElementById('screen'));
 
 const promptForNumbers = (text, callback) => {
@@ -329,7 +332,7 @@ new Menu('Movie')
     })
     .addItem('Record', async () => {
       const file = await main.fs.pick('Select movie to record');
-      const movie = file.data && file.data.length ?
+      const movie = file.data && file.data.byteLength ?
           Movie.parse(file.data, 'NES-MOV\x1a') : undefined;
       if (!(main.nes.movie instanceof Recorder) || movie) {
         main.nes.movie = new Recorder(main.nes, movie);
@@ -353,3 +356,7 @@ new Menu('Debug')
     }))
     .addItem('Virtual Controllers', () => new debug.ControllerPanel(main.nes));
 
+// TODO - new speed debugging?
+//  - NOTE - movie came out okay, but there are a few glitches.
+//         - only significant one is at very end, maybe re-record.
+//         - add a "safety playback" mode that automatically loads snapshots

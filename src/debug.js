@@ -1118,7 +1118,8 @@ Debug.WatchOld = class {
 // Base class for faster run-throughs.  We can extend it with very targetted
 // functionality to complete a playback more quickly than we could otherwise.
 Debug.Fast = class {
-  constructor() {
+  constructor(nes) {
+    this.nes = nes;
     this.break = false;
   }
 
@@ -1126,6 +1127,194 @@ Debug.Fast = class {
   logMem() {}
   logScanline() {}
   logInterrupt() {}
+
+  breakOnExecute(address) {
+    this.logCpu = (op, pc) => {
+      if ((pc & 0x1fff) != (address & 0x1fff)) return;
+      const bank = this.nes.mmap.prgRomBank(pc);
+      pc = bank != null ? this.nes.mmap.prgRomAddress(bank, pc) :
+          pc < 0x2000 ? pc & 0x7ff : pc;
+      if (pc == address) this.break = true;
+    };
+  }
+
+  trackMmc3Pages() {
+    // Optimized for the configuration where 8000 and A000 are swapped, while
+    // C000..FFFF is fixed.  Other configurstions will not work as written.
+    // Writes 6 array buffers:
+    // rom - one byte per ROM byte, with these bits:
+    //     01: read as 8-bit
+    //     02: read as indirect address e.g. ($12) - this is a 16-bit read
+    //     04: preindexed
+    //     08: postindexed
+    //     10: continuation (argument) byte
+    //     20: executed during rendering
+    //     40: executed during IRQ
+    //     80: executed during NMI
+    // hi, lo - four byte per ROM byte.
+    //     each bit correspomnds to whether or not the given page is ever
+    //     loaded in the hi (a000..bfff) or lo (8000..9fff) bank when the
+    //     instruction is executed (all zeros for data).
+    // frame0, frameN - four bytes per ROM byte.
+    //     frame on which the byte was first / last accessed (read or executed).
+    // ram - one byte for each RAM byte:
+    //     01: read as 8 bit e.g. $12
+    //     02: read as indirect address e.g. ($12) - this is a 16-bit read
+    //     04: preindexed
+    //     08: postindexed
+    //     10: executed
+    //     20: written during rendering
+    //     40: written during IRQ
+    //     80: written during NMI
+
+    const nes = this.nes;
+    const args = new Uint8Array(256);
+    const addrModes = new Uint8Array(256);
+    const modeData = Uint8Array.of(
+      0x21,  // zp
+      0x21,  // rel
+      0x21,  // imp
+      0x21,  // abs
+      0x21,  // acc
+      0x21,  // imm
+      0x65,  // zp,x
+      0x65,  // zp,y
+      0x65,  // abs,x
+      0x65,  // abs,y
+      0x65,  // (zp,x)
+      0xa9,  // (zp),y
+      0x65,  // ind
+    );
+    for (let op = 0; op < 256; op++) {
+      if (!(op in opdata)) continue;
+      const opinf = opdata[op];
+      const instr = opmeta.instname[opinf & 0xff];
+      args[op] = opmeta.opdata[op] >>> 16 & 0xff;
+      const mode = opmeta.opdata[op] >>> 8 & 0xff;
+      addrModes[op] = modeData[mode];
+    }
+
+    nes.debug = new class extends Debug.Fast {
+      constructor() {
+        super(nes);
+        this.irqStack = new Uint16Array(0x100);
+        this.irqStack[0] = 0x100;
+        this.irqIndex = 0;
+        this.pc = 0;
+        this.lo = 0;
+        this.hi = 0;
+        this.cmd = 0;
+        this.ram = new Uint8Array(0x8000);
+        this.rom = new Uint8Array(nes.rom.romCount(1));
+        this.loBank = new Uint32Array(nes.rom.romCount(1));
+        this.hiBank = new Uint32Array(nes.rom.romCount(1));
+        this.frame0 = new Uint32Array(nes.rom.romCount(1));
+        this.frameN = new Uint32Array(nes.rom.romCount(1));
+        this.last = nes.rom.romCount(1) - 0x10000;
+        this.mode = 0;
+        this.irqStatus = 1;
+        this.frame = 1;
+      }
+
+      logCpu(op, pc) {
+        // pop out of interrupt if necessary
+        const sp = this.nes.cpu.REG_SP & 0xff;
+        while (this.irqIndex && sp >= (this.irqStack[this.irqIndex] & 0xff)) {
+          this.irqIndex--;
+          this.irqStatus = this.irqStack[this.irqIndex] >>> 3 & 0xe0;
+        }
+        // set the low bits of mode based on addressing mode
+        this.mode = addrModes[op];
+        // ram?
+        if (pc < 0x8000) {
+          this.ram[pc] |= 0x10;
+          return;
+        }
+        // which bank?
+        if (pc < 0xc000) {
+          if (pc < 0xa000) {
+            pc = (pc & 0x1fff) | (this.lo << 13);
+          } else {
+            pc = (pc & 0x1fff) | (this.hi << 13);
+          }
+        } else {
+          pc += this.last;
+        }          
+        this.pc = pc;
+        // Log the code execution
+
+        const size = args[op];
+        const loBit = 1 << this.lo;
+        const hiBit = 1 << this.hi;
+        let dataBit = this.irqStatus;
+        for (let i = 0; i < size; i++) {
+          this.rom[pc] |= dataBit;
+          this.loBank[pc] |= loBit;
+          this.hiBank[pc] |= hiBit;
+          if (!this.frame0[pc]) this.frame0[pc] = this.frame;
+          this.frameN[pc] = this.frame;
+          pc++;
+          dataBit |= 0x10;
+        }
+      }
+
+      logMem(op, addr, value, write = -1) {
+        if (addr < 0x8000) {
+          // RAM
+          if (op & MEM_WRITE) {
+            this.ram[addr] |= this.irqStatus;
+          }
+          if (op & MEM_READ) {
+            this.ram[addr] |= op & MEM_WORD ? this.mode >> 4 : this.mode & 0xf;
+          }
+          return;
+        }
+        // ROM
+        if (op & MEM_WRITE) {
+          // Register write – MMC3 only here
+          const a = addr & 0xe001;
+          if (a == 0x8000) {
+            const w = write == -1 ? value : write;
+            this.cmd = w & 7;
+          } else if (a == 0x8001) {
+            const w = write == -1 ? value : write;
+            if (this.cmd == 6) {
+              this.lo = w;
+            } else if (this.cmd == 7) {
+              this.hi = w;
+            }
+          }
+          return;
+        }
+        // Normal read - which bank?
+        if (addr < 0xc000) {
+          if (addr < 0xa000) {
+            addr = (addr & 0x1fff) | (this.lo << 13);
+          } else {
+            addr = (addr & 0x1fff) | (this.hi << 13);
+          }
+        } else {
+          addr += this.last;
+        }
+        this.rom[addr] |= op & MEM_WORD ? this.mode >> 4 : this.mode & 0xf;
+        this.loBank[addr] |= (1 << this.lo);
+        this.hiBank[addr] |= (1 << this.hi);
+        if (!this.frame0[addr]) this.frame0[addr] = this.frame;
+        this.frameN[addr] = this.frame;
+      }
+
+      logInterrupt(type) {
+        if (type != Debug.RESET) {
+          this.irqStack[++this.irqIndex] =
+              this.nes.cpu.REG_SP & 0xff | (type == Debug.NMI ? 0x400 : 0x200);
+        }
+      }
+
+      logScanline(line, frame) {
+        if (!line) this.frame++;
+      }
+    };
+  }
 };
 
 const selectorLength = (selector) => {

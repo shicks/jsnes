@@ -181,7 +181,13 @@ export const Movie = Proto.message('Movie', {
   frames: Proto.uint32(2),
 
   Chunk: Proto.message('Chunk', {
+    // Optional snapshot to seek directly to the start of this chunk.
     snapshot: Proto.bytes(1),
+    // Whether it's required to reload the snapshot, i.e. if the run
+    // was segmented and therefore the CPU state needs to be reset.
+    // It should always be *allowed* to reload, but this indicates
+    // that it's required.
+    reload: Proto.uint32(4),
     // Each element represents a single button press or release
     // and various bits within it represent the button, whether
     // it was pressed or released, and the number of frames since

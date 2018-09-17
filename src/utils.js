@@ -139,6 +139,11 @@ export class RomBankSwitcher {
     // return entry;
   }
 
+  clearCache() {
+    this.cache = [];
+    this.curCacheSize = 0;
+  }
+
   swap(address, bank, size) {
     // Shrink pageSize to fit.
     const bits = log2(size);

@@ -1042,8 +1042,7 @@ CPU.prototype = {
         // *******
 
         // Transfer index X to stack pointer:
-        this.REG_SP = this.REG_X + 0x0100;
-        this.stackWrap();
+        this.REG_SP = (this.REG_X & 0xff) | 0x0100;
         break;
       }
       case 55: {
@@ -1116,10 +1115,6 @@ CPU.prototype = {
     this.REG_SP = 0x0100 | (this.REG_SP & 0xff);
   },
 
-  stackWrap: function() {
-    this.REG_SP = 0x0100 | (this.REG_SP & 0xff);
-  },
-
   pull: function() {
     this.REG_SP++;
     this.REG_SP = 0x0100 | (this.REG_SP & 0xff);
@@ -1128,17 +1123,13 @@ CPU.prototype = {
     return value;
   },
 
-  pageCrossed: function(addr1, addr2) {
-    return (addr1 & 0xff00) !== (addr2 & 0xff00);
-  },
-
   haltCycles: function(cycles) {
     this.cyclesToHalt += cycles;
   },
 
   doNonMaskableInterrupt: function(status) {
-    if (this.nes.debug) this.nes.debug.logInterrupt(Debug.NMI);
     if ((this.load(0x2000) & 128) !== 0) {
+      if (this.nes.debug) this.nes.debug.logInterrupt(Debug.NMI);
       // Check whether VBlank Interrupts are enabled
 
       this.REG_PC_NEW++;

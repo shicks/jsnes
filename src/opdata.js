@@ -5,7 +5,7 @@ import * as utils from './utils.js';
 
 // Generates and provides an array of details about instructions
 export const OpMeta = function() {
-  this.opdata = new Array(256);
+  this.opdata = new Uint32Array(256);
 
   // Set all to invalid instruction (to detect crashes):
   for (var i = 0; i < 256; i++) this.opdata[i] = 0xff;

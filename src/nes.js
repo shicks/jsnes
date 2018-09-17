@@ -60,7 +60,7 @@ export class NES {
     this.zapperFireUp = this.zapperFireUp.bind(this);
 
     // for logging, etc
-    this.debug = new Debug(this);
+    this.debug = new Debug.Fast(this);
     this.breakpointCycles = null;
 
     this.fpsFrameCount = 0;
@@ -296,6 +296,6 @@ export class NES {
   }
 
   disableDebugging() {
-    this.debug = new Debug.Fast();
+    this.debug = new Debug.Fast(this);
   }
 }

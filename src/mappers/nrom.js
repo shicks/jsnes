@@ -417,8 +417,8 @@ export class NROM {
   }
 
   clearCache() {
-    if (this.prgRomSwitcher) this.prgRomSwitcher.cache.clear();
-    if (this.chrRomSwitcher) this.chrRomSwitcher.cache.clear();
+    if (this.prgRomSwitcher) this.prgRomSwitcher.clearCache();
+    if (this.chrRomSwitcher) this.chrRomSwitcher.clearCache();
     this.restoreSavestate(this.writeSavestate());
   }
 }

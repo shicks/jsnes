@@ -103,6 +103,10 @@ export class Playback {
     this.framesWaited = 0;
     this.framesFromStart = 0;
     this.playing = false;
+    // NOTE: Playback has gotten pretty reliable, but it's still not perfect.
+    // This provides a bit of a failsafe so that we can "fire and forget" an
+    // analysis and not worry that it will spend half an hour on the main menu.
+    this.alwaysReload = true;
   }
 
   start() {
@@ -202,11 +206,10 @@ export class Playback {
         // recording) then when we cross it during normal playback
         // we'll never see the button-up, and the playback will break.
         this.nes.resetControllers();
-        // TODO - failsafe in case we run into problems?
-        // if (this.chunkIndex < this.movie.chunks.length &&
-        //     this.movie.chunks[this.chunkIndex].snapshot) {
-        //   this.nes.restoreSavestate(this.movie.chunks[this.chunkIndex].snapshot);
-        // }
+        const next = this.movie.chunks[this.chunkIndex];
+        if (next && next.snapshot && (this.alwaysReload || next.reload)) {
+          this.nes.restoreSavestate(next.snapshot);
+        }
         continue;
       }
       const record = chunk.records[this.recordIndex];
