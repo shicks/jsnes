@@ -10,7 +10,7 @@ import {FrameTimer} from './frametimer.js';
 import * as debug from './debugger.js';
 import {Component} from './component.js';
 import {FileSystem} from './fs.js';
-
+import {dynamicImport} from './utils.js';
 import {Menu} from './menu.js';
 
 const bufferLog = () => {}; console.log.bind(console);
@@ -26,6 +26,7 @@ class Main {
 
     this.fs = new FileSystem();
     this.romName = null;
+    this.patch = {};
 
     this.screen = new Screen(screen);
     // screen - onGenerateFrame => this.nes.frame() ?
@@ -164,13 +165,25 @@ class Main {
     }
   }
 
-  handleLoaded(name, data) {
+  async handleLoaded(name, data) {
     if (this.running) this.stop();
     this.state.uiEnabled = true;
     this.state.running = true;
     this.state.loading = false;
     this.romName = name;
-    this.nes.loadROM(new Uint8Array(data));
+
+    let rom = new Uint8Array(data);
+    let patch = this.getHash('patch');
+    if (patch) {
+      if (/^\/|\./.test(patch)) throw new Error(`bad patch: ${patch}`);
+      this.patch = await import(`../../ext/${patch}.js`);
+      if (this.patch.default) {
+        const p = this.patch.default;
+        if (p && p.apply) p.apply(rom);
+      }
+    }
+
+    this.nes.loadROM(rom);
     if (!this.getHash('noautostart')) this.start();
   }
 
@@ -254,9 +267,28 @@ class Main {
     return new debug.PlaybackPanel(this.nes);
   }
 
+  handleKeyDown(e) {
+    if (e.key == '`') {
+      this.setFrameSkip(20);
+      return true;
+    }
+    return false;
+  }
+
   handleKey(e) {
     if (e.key == 'p') {
       this.handlePauseResume();
+      return true;
+    } else if (e.key == '`') {
+      this.setFrameSkip(0);
+      return true;
+    } else if (e.key == '~') {
+      // alternatively, use = and - to speed up/down?
+      this.setFrameSkip(this.frameTimer.frameSkip ? 0 : 20);
+      return true;
+    } else if (e.key == 'm') {
+      this.speakers.enabled = !this.speakers.enabled;
+      if (this.speakers.enabled) this.speakers.start();
       return true;
     }
     for (const component of this.components()) {
@@ -349,6 +381,8 @@ new Menu('Debug')
     .addItem('Watch Page', () => promptForNumbers('Pages', pages => {
       for (const page of pages) new debug.WatchPage(main.nes, page);
     }))
+    .addItem('Watch Registers', () => new debug.WatchReg(main.nes))
+    .addItem('Watch PPU', () => new debug.WatchPpu(main.nes))
     .addItem('Nametable', () => new debug.NametableTextViewer(main.nes))
     .addItem('Pattern Table', () => new debug.PatternTableViewer(main.nes))
     .addItem('CHR Viewer', () => promptForNumbers('Banks', banks => {

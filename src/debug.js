@@ -280,9 +280,9 @@ export class Debug {
       const mask = bank != null ? BREAK_PRG_R :
             op & MEM_PPU ? (op == Debug.PPU_RD ? BREAK_PPU_R : BREAK_PPU_W) :
             (op >> 4) & 3; // tricky: may include both read and write
-      if ((this.breakpoints[addr] & mask)
+      if ((this.breakpoints[addr] & mask) &&
           // NOTE: breakIf is not going to know it's PPU...?
-          && this.breakIf(address, op & MEM_READ ? 'r' : 'w', value, this.banked(this.lastPc))) {
+          this.breakIf(address, op & MEM_READ ? 'r' : 'w', value, this.banked(this.lastPc))) {
         const opMask = op & (MEM_READ | MEM_WRITE);
         const type = opMask == MEM_READ ? 'read' :
             opMask == MEM_WRITE ? 'write' : 'read-write';
@@ -347,12 +347,25 @@ export class Debug {
     this.holding.interrupt();
   }
 
+  logStack(adjust) {
+    let op = STACK_PUSH;
+    if (adjust < 0) {
+      op = STACK_PULL;
+      adjust = -adjust;
+    }
+    while (adjust-- > 0) {
+      if (this.pos + 1 >= this.buffer.length) this.resetTrace();
+      this.buffer[this.pos++] = op;
+    }    
+  }
+
   /**
    * Returns a valid TracePosition.  If an argument is given, clamps it to the
    * available range.  Otherwise returns the current position.
    */
   tracePosition() {
-    return new TracePosition(this, this.resets, this.pos, this.frame, this.scanline);
+    return new TracePosition(this, this.resets, this.pos, this.frame,
+                             this.scanline, 0x1ff - this.nes.cpu.REG_SP);
   }
 
   /**
@@ -382,7 +395,7 @@ export class Debug {
    * @param {!TracePosition|number=} count
    * @return {!TracePosition} Position at end.
    */
-  visitLog({cpu, mem, scanline, interrupt, elided} = {},
+  visitLog({cpu, mem, scanline, interrupt, elided, stack} = {},
            end = undefined, start = 0x400, reverse = false) {
     if (!end) end = this.tracePosition();
     if (!end.isValid()) return end;
@@ -393,13 +406,13 @@ export class Debug {
         resets--;
         pos = Math.max(pos + this.buffer.length, this.pos + 1);
       }
-      start = new TracePosition(this, resets, pos, null, null);
+      start = new TracePosition(this, resets, pos);
     }
     let pos = end.pos;
     let resets = end.resets;
     let currentFrame = end.frame;
     let currentScanline = end.scanline;
-
+    let currentStack = end.stackDepth;
     let entries = [];
 
     // Work backwards, from most to least recent
@@ -422,12 +435,19 @@ export class Debug {
         currentScanline = 240;
       } else if (selector == Debug.SCANLINE) {
         currentScanline = this.buffer[pos - 1] - 1;
+      } else if (selector == STACK_PUSH) {
+        currentStack--;
+      } else if (selector == STACK_PULL) {
+        currentStack++;
       }
       pos -= len - 1;
     }
     // TODO - handle reverse corectly?
     let d = scanline && scanline(currentScanline, currentFrame);
     if (d && d.done) return end;
+    d = stack && stack(currentStack & 0xff);
+    if (d && d.done) return end;
+    let forwardStack = currentStack;
 
     // Iterate backwards over entries, forward in time
     if (reverse) entries = entries.reverse();
@@ -439,18 +459,18 @@ export class Debug {
         const op = this.buffer[--pos];
         const addr = this.buffer[--pos] | (this.buffer[--pos] << 8);
         let romaddr = null;
-let bank = null;
+        let bank = null;
         if (selector & PAGED) {
           bank = this.buffer[--pos];
           romaddr = this.nes.mmap.prgRomAddress(bank, addr);
-}
+        }
 
-if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, pos+5).map(x=>x.toString(16)), addr, bank, romaddr);
+//if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, pos+5).map(x=>x.toString(16)), addr, bank, romaddr);
 
         d = cpu && cpu(op, addr, romaddr);
         if (d && d.done) {
           return new TracePosition(
-              this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+              this, pos > this.pos ? this.resets - 1 : this.resets, pos);
         }
         break;
       }
@@ -468,7 +488,7 @@ if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, pos+5).map(x=>x.toString
         d = mem && mem(addr, romaddr, read, write);
         if (d && d.done) {
           return new TracePosition(
-              this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+              this, pos > this.pos ? this.resets - 1 : this.resets, pos);
         }
         break;
       }
@@ -479,14 +499,14 @@ if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, pos+5).map(x=>x.toString
           d = scanline && scanline(-1, frame);
           if (d && d.done) {
             return new TracePosition(
-                this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+                this, pos > this.pos ? this.resets - 1 : this.resets, pos);
           }
           break;
         case Debug.SCANLINE:
           d = scanline && scanline(this.buffer[--pos]);
           if (d && d.done) {
             return new TracePosition(
-                this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+                this, pos > this.pos ? this.resets - 1 : this.resets, pos);
           }
           break;
         case Debug.IRQ:
@@ -495,23 +515,31 @@ if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, pos+5).map(x=>x.toString
           d = interrupt && interrupt(selector);
           if (d && d.done) {
             return new TracePosition(
-                this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+                this, pos > this.pos ? this.resets - 1 : this.resets, pos);
           }
           break;
         case Debug.ELIDED:
           d = elided && elided();
           if (d && d.done) {
             return new TracePosition(
-                this, pos > this.pos ? this.resets - 1 : this.resets, pos, null, null);
+                this, pos > this.pos ? this.resets - 1 : this.resets, pos);
+          }
+          break;
+        case STACK_PUSH:
+        case STACK_PULL:
+          d = stack && stack(forwardStack =
+                             (forwardStack + (selector == STACK_PUSH ? 1 : -1)) & 0xff);
+          if (d && d.done) {
+            return new TracePosition(
+                this, pos > this.pos ? this.resets - 1 : this.resets, pos);
           }
           break;
         }
-        break;
       }
       default:
       }
     }
-    return new TracePosition(this, resets, pos, currentFrame, currentScanline);
+    return new TracePosition(this, resets, pos, currentFrame, currentScanline, currentStack);
   }
 
   /** @return {!TracePosition} */
@@ -519,7 +547,11 @@ if(romaddr>0x3ffff)console.error(this.buffer.slice(pos, pos+5).map(x=>x.toString
     const parts = [];
     let frame = '????';
     let scanline = '??';
+    let stack = '';
     const result = this.visitLog({
+      stack: (depth) => {
+        stack = ' '.repeat((depth & 0xff) >>> 0);
+      },
       cpu: (op, addr, romaddr) => {
         // TODO - rewrite this to call formatInstruction
         const opinf = opdata[op];
@@ -548,7 +580,7 @@ return;
         const mode = opmeta.addrFmt[(opinf >> 8) & 0xff](romaddr, arg).padEnd(8);
         bytes = bytes.map(x => x.toString(16).padStart(2, 0));
         while (bytes.length < 3) bytes.push('  ');
-        parts.push(`\n ${frame}:${scanline}${pc}: ${bytes.join(' ')} ${instr} ${mode}`);
+        parts.push(`\n ${frame}:${scanline}${pc}: ${bytes.join(' ')} ${stack}${instr} ${mode}`);
       },
       mem: (addr, romaddr, read, write) => {
         let a = (typeof romaddr == 'number' ? romaddr : addr).toString(16);
@@ -761,12 +793,13 @@ class HoldingPatternTracker {
 
 // Private-constructor marker class...
 class TracePosition {
-  constructor(debug, resets, pos, frame, scanline) {
+  constructor(debug, resets, pos, frame = null, scanline = null, stackDepth = null) {
     this.debug = debug;
     this.resets = resets;
     this.pos = pos;
     this.frame = frame;
     this.scanline = scanline;
+    this.stackDepth = stackDepth;
   }
 
   distance(that) {
@@ -1127,6 +1160,7 @@ Debug.Fast = class {
   logMem() {}
   logScanline() {}
   logInterrupt() {}
+  logStack() {}
 
   breakOnExecute(address) {
     this.logCpu = (op, pc) => {
@@ -1315,6 +1349,267 @@ Debug.Fast = class {
       }
     };
   }
+
+  trackRegisterValues() {
+    // Records all values of X, Y, and A at all PRG ROM locations.
+    // Assumes MMC3 for efficiently tracking paging.
+
+    const nes = this.nes;
+
+    nes.debug = new class extends Debug.Fast {
+      constructor() {
+        super(nes);
+        const rom = nes.rom.romCount(1);
+        this.a = new Uint16Array(rom * 16);
+        this.x = new Uint16Array(rom * 16);
+        this.y = new Uint16Array(rom * 16);
+        this.lo = 0;
+        this.hi = 0;
+        this.cmd = 0;
+        this.last = rom - 0x10000;
+      }
+
+      logMem(op, addr, value, write = -1) {
+        if (op & MEM_WRITE && addr >= 0x8000) {
+          // Register write – MMC3 only here
+          const a = addr & 0xe001;
+          if (a == 0x8000) {
+            const w = write == -1 ? value : write;
+            this.cmd = w & 7;
+          } else if (a == 0x8001) {
+            const w = write == -1 ? value : write;
+            if (this.cmd == 6) {
+              this.lo = w;
+            } else if (this.cmd == 7) {
+              this.hi = w;
+            }
+          }
+        }
+      }
+
+      logCpu(op, pc) {
+        if (pc < 0x8000) return;
+        // which bank?
+        if (pc < 0xc000) {
+          if (pc < 0xa000) {
+            pc = (pc & 0x1fff) | (this.lo << 13);
+          } else {
+            pc = (pc & 0x1fff) | (this.hi << 13);
+          }
+        } else {
+          pc += this.last;
+        }
+        const a = this.nes.cpu.REG_ACC;
+        const x = this.nes.cpu.REG_X;
+        const y = this.nes.cpu.REG_Y;
+        this.a[pc << 4 | a >> 4] |= 1 << (a & 15);
+        this.x[pc << 4 | x >> 4] |= 1 << (x & 15);
+        this.y[pc << 4 | y >> 4] |= 1 << (y & 15);
+      }
+
+      result() {
+        // Format the result, one line per PRG ROM location.
+        function* values(arr) {
+          for (let i = 0; i < 16; i++) {
+            let v = arr[i];
+            let j = 0;
+            while (v) {
+              if (v & 1) yield (i << 4) | j;
+              j++;
+              v >>>= 1;
+            }
+          }
+        }
+        function* compress(values) {
+          let r0 = -1;
+          let r1 = -1;
+          let prev = -1;
+          const iter = values[Symbol.iterator]();
+          for (;;) {
+            const {value, done} = iter.next();
+            if (!done && r0 < 0) {
+              r0 = value;
+            } else if (!done && r1 < 0) {
+              r1 = value;
+            } else if (!done && value - prev == r1 - r0) {
+              // continue the pattern
+            } else {
+              // breaks the pattern - yield the compressed version only if
+              // we would elide at least 1 element, so there should be
+              // 3 or 4 elements at least.  e.g. r0=4, r1=6, prev=8, v=9
+              // is a no go.  r0=4, r1=5, prev=6, v=8 would go to 4..6 tho.
+              if (prev == r1) {
+                // definitely no elision, only output one element.
+                if (r0 >= 0) yield r0.toString(16);
+                r0 = r1;
+                r1 = done ? -1 : value;
+              } else if (r1 - r0 == 1) {
+                // elide
+                yield `${r0.toString(16)}..${prev.toString(16)}`;
+                r0 = value;
+                r1 = -1;
+              } else if (r1 < 0 || prev + r0 == r1 << 1) {
+                // no elision, since we only have 3 elts and need an increment.
+                if (r0 >= 0) yield r0.toString(16);
+                if (r1 >= 0) yield r1.toString(16);
+                r0 = prev != r0 ? prev : -1;
+                r1 = -1;
+              } else {
+                // elide with increment
+                yield `${r0.toString(16)},${r1.toString(16)}..${prev.toString(16)}`;
+                r0 = value;
+                r1 = -1;
+              }
+            }
+            prev = value;
+            if (done) break;
+          }
+          if (r0 >= 0) yield r0.toString(16);
+          if (r1 >= 0) yield r1.toString(16);
+        }
+        const show = (last, full, index) => {
+          // check if it's the same.
+          let same = true;
+          let empty = true;
+          for (let i = 0; (same || empty) && i < 16; i++) {
+            if (last[i] != full[index + i]) same = false;
+            if (full[index + i]) empty = false;
+          }
+          if (empty) return '';
+          if (same) return 's';
+          // compress ranges?  what about 1,3,5,7,9,...?
+          last.set(full.subarray(index, index + 16));
+          return [...compress(values(last))].join(' ');
+        };
+        const lines = [];
+        const s = this.a.length >> 4;
+        let lastA = new Uint16Array(16);
+        let lastX = new Uint16Array(16);
+        let lastY = new Uint16Array(16);
+        for (let i = 0; i < s; i++) {
+          const index = i << 4;
+          const a = show(lastA, this.a, index);
+          const x = show(lastX, this.x, index);
+          const y = show(lastY, this.y, index);
+          let addr = `$${i.toString(16).padStart(5, 0)}: `;
+          if (a + x + y == 'sss') {
+            lines.push(`${addr}same`);
+            continue;
+          }
+          if (a && a != 's') {
+            lines.push(`${addr}A = ${a}`);
+            addr = '        ';
+          }
+          if (x && x != 's') {
+            lines.push(`${addr}X = ${x}`);
+            addr = '        ';
+          }
+          if (y && y != 's') {
+            lines.push(`${addr}Y = ${y}`);
+          }
+        }
+        return lines.join('\n');
+      }
+    };
+  }
+
+  trackMemoryValues() {
+    // Records all values of CPU and PRG RAM.
+
+    const nes = this.nes;
+
+    nes.debug = new class extends Debug.Fast {
+      constructor() {
+        super(nes);
+        const bytes = 0x8000;
+        this.ram = new Uint16Array(bytes * 16);
+      }
+
+      logMem(op, addr, value, write = -1) {
+        if (op & MEM_WRITE && addr < 0x8000) {
+          if (addr < 0x6000) {
+            if (addr < 0x2000) {
+              addr &= 0x7ff;
+            } else {
+              return;
+            }
+          }
+          const w = write == -1 ? value : write;
+          this.ram[addr << 4 | w >> 4] |= 1 << (w & 0xf);
+        }
+      }
+
+      result() {
+        // Format the result, one line per PRG ROM location.
+        function* values(arr, index) {
+          for (let i = 0; i < 16; i++) {
+            let v = arr[index + i];
+            let j = 0;
+            while (v) {
+              if (v & 1) yield (i << 4) | j;
+              j++;
+              v >>>= 1;
+            }
+          }
+        }
+        function* compress(values) {
+          let r0 = -1;
+          let r1 = -1;
+          let prev = -1;
+          const iter = values[Symbol.iterator]();
+          for (;;) {
+            const {value, done} = iter.next();
+            if (!done && r0 < 0) {
+              r0 = value;
+            } else if (!done && r1 < 0) {
+              r1 = value;
+            } else if (!done && value - prev == r1 - r0) {
+              // continue the pattern
+            } else {
+              // breaks the pattern - yield the compressed version only if
+              // we would elide at least 1 element, so there should be
+              // 3 or 4 elements at least.  e.g. r0=4, r1=6, prev=8, v=9
+              // is a no go.  r0=4, r1=5, prev=6, v=8 would go to 4..6 tho.
+              if (prev == r1) {
+                // definitely no elision, only output one element.
+                if (r0 >= 0) yield r0.toString(16);
+                r0 = r1;
+                r1 = done ? -1 : value;
+              } else if (r1 - r0 == 1) {
+                // elide
+                yield `${r0.toString(16)}..${prev.toString(16)}`;
+                r0 = value;
+                r1 = -1;
+              } else if (r1 < 0 || prev + r0 == r1 << 1) {
+                // no elision, since we only have 3 elts and need an increment.
+                if (r0 >= 0) yield r0.toString(16);
+                if (r1 >= 0) yield r1.toString(16);
+                r0 = prev != r0 ? prev : -1;
+                r1 = -1;
+              } else {
+                // elide with increment
+                yield `${r0.toString(16)},${r1.toString(16)}..${prev.toString(16)}`;
+                r0 = value;
+                r1 = -1;
+              }
+            }
+            prev = value;
+            if (done) break;
+          }
+          if (r0 >= 0) yield r0.toString(16);
+          if (r1 >= 0) yield r1.toString(16);
+        }
+        const lines = [];
+        const s = this.ram.length >> 4;
+        for (let i = 0; i < s; i++) {
+          const index = i << 4;
+          const v = [...compress(values(this.ram, index))].join(' ');
+          lines.push(`$${i.toString(16).padStart(4, 0)}: ${v}`);
+        }
+        return lines.join('\n');
+      }
+    };
+  }
 };
 
 const selectorLength = (selector) => {
@@ -1356,6 +1651,16 @@ const BREAKPOINT_MODES = {
   'ppu-w': BREAK_PPU_W,
 };
 
+const STACK_ADJUST = {
+  [0x20]: 2,  // jsr
+  [0x48]: 1,  // pha
+  [0x08]: 1,  // php
+  [0x68]: -1, // pla
+  [0x28]: -1, // plp
+  [0x40]: -3, // rti
+  [0x20]: -2, // rts
+};
+
 // To pass as first arg of logMem
 Debug.MEM_RD   = 0b00010010;
 Debug.MEM_RD16 = 0b00011010;
@@ -1371,6 +1676,9 @@ Debug.NMI      = 0b00001111;
 Debug.RESET    = 0b00010011;
 // Indicates that redundant frames have been elided
 Debug.ELIDED   = 0b00010111;
+
+const STACK_PUSH = 0b00011011;
+const STACK_PULL = 0b00011111;
 
 const CPU = 1;
 const PAGED = 4;
@@ -1389,3 +1697,35 @@ LEN_BY_OP[Debug.MEM_WR] = 4;
 LEN_BY_OP[Debug.MEM_RW] = 5;
 LEN_BY_OP[Debug.PPU_RD] = 4;
 LEN_BY_OP[Debug.PPU_WR] = 4;
+
+
+
+// Simple unit test for compress():
+
+// const test = (expect, ...v) => {
+//   it(`should handle ${expect}`, () => {
+//     const got = [...compress(v)].join(' ');
+//     if (got != expect) throw new Error(`Expected ${expect} but got ${got}`);
+//   });
+// };
+
+// test('');
+// test('0', 0);
+// test('1', 1);
+// test('1 2', 1, 2);
+// test('0..2', 0, 1, 2);
+// test('1..3', 1, 2, 3);
+// test('1 2 4', 1, 2, 4);
+// test('1..4', 1, 2, 3, 4);
+// test('1 3 5', 1, 3, 5);
+// test('1 3..5', 1, 3, 4, 5);
+// test('1..3 5', 1, 2, 3, 5);
+// test('1..3 5..7', 1, 2, 3, 5, 6, 7);
+// test('1..3 5 7..9', 1, 2, 3, 5, 7, 8, 9);
+// test('2..4', 2, 3, 4);
+// test('2..4 6', 2, 3, 4, 6);
+// test('1,3..7', 1, 3, 5, 7);
+// test('1,3..9', 1, 3, 5, 7, 9);
+// test('1..4 6,8..c', 1, 2, 3, 4, 6, 8, 10, 12);
+// test('1..4 6,8..c d e,10..14', 1, 2, 3, 4, 6, 8, 10, 12, 13, 14, 16, 18, 20);
+// test('ff', 255);

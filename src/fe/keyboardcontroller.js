@@ -38,8 +38,10 @@ export class KeyboardController {
     var key = KEYS[e.keyCode];
     if (key) {
       this.main.nes.buttonDown(key[0], key[1]);
-      e.preventDefault();
+    } else if (!this.main.handleKeyDown(e)) {
+      return;
     }
+    e.preventDefault();
   }
 
   handleKeyUp(e) {

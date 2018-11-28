@@ -1042,6 +1042,10 @@ CPU.prototype = {
         // *******
 
         // Transfer index X to stack pointer:
+        if (this.nes.debug) {
+          const delta = (this.REG_SP - this.REG_X) & 0xff;
+          this.nes.debug.logStack(delta > 0x7f ? delta - 0x100 : delta);
+        }
         this.REG_SP = (this.REG_X & 0xff) | 0x0100;
         break;
       }
@@ -1110,7 +1114,10 @@ CPU.prototype = {
 
   push: function(value) {
     this.ram[this.REG_SP] = value;
-    if (this.nes.debug) this.nes.debug.logMem(Debug.MEM_WR, this.REG_SP, value);
+    if (this.nes.debug) {
+      this.nes.debug.logMem(Debug.MEM_WR, this.REG_SP, value);
+      this.nes.debug.logStack(1);
+    }
     this.REG_SP--;
     this.REG_SP = 0x0100 | (this.REG_SP & 0xff);
   },
@@ -1119,7 +1126,10 @@ CPU.prototype = {
     this.REG_SP++;
     this.REG_SP = 0x0100 | (this.REG_SP & 0xff);
     const value = this.ram[this.REG_SP];
-    if (this.nes.debug) this.nes.debug.logMem(Debug.MEM_RD, this.REG_SP, value);
+    if (this.nes.debug) {
+      this.nes.debug.logMem(Debug.MEM_RD, this.REG_SP, value);
+      this.nes.debug.logStack(-1);
+    }
     return value;
   },
 

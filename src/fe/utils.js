@@ -22,3 +22,18 @@ export const link = (parent, text, handler) => {
 
 // Format a hex number
 export const fmt = (x, p) => `$${x.toString(16).padStart(p, 0)}`;
+
+export const dynamicImport = (module) => {
+  return new Promise((ok, fail) => {
+    const index = dynamicImportPromises.length;
+    dynamicImportPromises.push({ok, fail});
+    const script = document.createElement('script');
+    script.type = 'module';
+    script.textContent = `
+      import * as module from '${module}';
+      import {dynamicImport} from 'src/fe/utils.js';
+      dynamicImport.promises[${index}].ok(module);`;
+    document.body.appendChild(script);
+  });
+};
+dynamicImport.promises = [];

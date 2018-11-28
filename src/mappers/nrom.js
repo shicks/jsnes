@@ -380,6 +380,12 @@ export class NROM {
     return a;
   }
 
+  // Maps the PPU memory address to CHR ROM, or returns null if not in CHR ROM.
+  mapChr(addr) {
+    if (addr >= 0x2000) return null;
+    return this.chrRomSwitcher.map(addr);
+  }
+
   writeExtSavestate() {}
 
   writeSavestate() {

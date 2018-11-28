@@ -11,9 +11,10 @@ export class Watch {
     this.element.classList.add('value');
     this.value = -1;
     this.red = 0;
+    this.format = format;
   }
 
-  update(format = (x) => fmt(x, 2), dim = 2) {
+  update(format = (x) => this.format(x), dim = 2) {
     const newValue = this.expression();
     if (this.value != newValue) {
       this.element.textContent = format(newValue);
@@ -79,6 +80,72 @@ export class WatchPanel extends WatchGroup {
         entry.appendChild(watch.element);
         this.watches.push(watch);
       }
+    }
+  }
+}
+
+export class WatchReg extends WatchGroup {
+  constructor(nes) {
+    super();
+    this.element.classList.add('watch');
+    this.group = child(this.element, 'div');
+    this.watch('A: ', () => nes.cpu.REG_ACC);
+    this.watch(' X: ', () => nes.cpu.REG_X);
+    this.watch(' Y: ', () => nes.cpu.REG_Y);
+    this.watch('\nSP: ', () => nes.cpu.REG_SP & 0xff);
+    this.watch(' PC: ', () => nes.cpu.REG_PC, (x) => fmt(x, 4));
+    this.watch('\nF: ', () => nes.cpu.F_CARRY ? 'C' : '-', (x) => x);
+    this.watch('', () => nes.cpu.F_NONZERO ? '-' : 'Z', (x) => x);
+    this.watch('', () => nes.cpu.F_INTERRUPT ? 'I' : '-', (x) => x);
+    this.watch('', () => nes.cpu.F_DECIMAL ? 'D' : '-', (x) => x);
+    this.watch('', () => nes.cpu.F_BRK ? 'B' : '-', (x) => x);
+    this.watch('', () => nes.cpu.F_NOTUSED ? 'U' : '-', (x) => x);
+    this.watch('', () => nes.cpu.F_OVERFLOW ? 'V' : '-', (x) => x);
+    this.watch('', () => nes.cpu.F_SIGN ? 'S' : '-', (x) => x);
+  }
+
+  watch(label, reg, fmt = undefined) {
+    if (label) text(this.group, label);
+    const watch = new Watch(reg, fmt);
+    this.group.appendChild(watch.element);
+    this.watches.push(watch);
+  }
+
+  update(dim) {
+    for (const watch of this.watches) {
+      watch.update(undefined, dim);
+    }
+  }
+}
+
+export class WatchPpu extends WatchGroup {
+  constructor(nes) {
+    super();
+    this.element.classList.add('watch');
+    this.group = child(this.element, 'div');
+    this.watch('frame: ', () => nes.ppu.frame);
+    this.watch(' scanline: ', () => nes.ppu.scanline);
+    this.watch(' curX: ', () => nes.ppu.curX);
+    this.watch('\ncntFV: ', () => nes.ppu.cntFV.toString(16));
+    this.watch(' cntVT: ', () => nes.ppu.cntVT.toString(16));
+    this.watch(' cntV: ', () => nes.ppu.cntV.toString(16));
+    this.watch(' cntH: ', () => nes.ppu.cntH.toString(16));
+    this.watch('\nregFV: ', () => nes.ppu.regFV.toString(16));
+    this.watch(' regVT: ', () => nes.ppu.regVT.toString(16));
+    this.watch(' regV: ', () => nes.ppu.regV.toString(16));
+    this.watch(' regH: ', () => nes.ppu.regH.toString(16));
+  }
+
+  watch(label, reg, fmt = undefined) {
+    if (label) text(this.group, label);
+    const watch = new Watch(reg, fmt);
+    this.group.appendChild(watch.element);
+    this.watches.push(watch);
+  }
+
+  update(dim) {
+    for (const watch of this.watches) {
+      watch.update(undefined, dim);
     }
   }
 }
@@ -234,6 +301,28 @@ export class PatternTableViewer extends Component {
     this.palette = null;
     this.palIndex = -1;
     this.canvas.addEventListener('click', (e) => this.click(e));
+    this.canvas.addEventListener('mousemove', (e) => this.mousemove(e));
+    this.info = child(this.element, 'pre');
+  }
+
+  mousemove(e) {
+    let x = e.offsetX;
+    let y = e.offsetY;
+    const table = x < 146 ? 0 : 1;
+    if (table) x -= 145;
+    if (y >= 145) { // palette
+      const index = Math.floor(x / 33) + table * 4;
+      if (this.palIndex == index) {
+        this.palIndex = -1;
+      } else {
+        this.palIndex = index;
+      }
+      this.hoverPalette(index);
+      return;
+    }
+    const row = Math.floor(y / 9);
+    const column = Math.floor(x / 9);
+    this.hoverTile(table, row, column);
   }
 
   click(e) {
@@ -248,6 +337,20 @@ export class PatternTableViewer extends Component {
       this.palIndex = index;
     }
     this.frame();
+  }
+
+  hoverPalette(index) {
+    // TODO - not really a good way to get the index we actually want... :-/
+  }
+
+  hoverTile(table, row, col) {
+    const addr = table << 12 | row << 8 | col << 4;
+    const index = (addr >> 4).toString(16).padStart(3, 0);
+    const fullAddr = this.nes.mmap.mapChr(addr);
+    const fullIndex = (fullAddr >> 4).toString(16).padStart(4, 0);
+    const bank = (fullAddr >> 10).toString(16).padStart(2, 0);
+    this.info.textContent =
+        `Pattern $${fullIndex} (at $${index}), 1k bank $${bank}`;
   }
 
   getTile(table, row, col, tileRow, colors) {
@@ -331,6 +434,10 @@ export class ChrRomViewer extends PatternTableViewer {
   constructor(nes, pages) {
     super(nes);
     this.pages = pages;
+  }
+
+  hoverTile(table, row, col) {
+    // TODO - less important, but might be nice.
   }
 
   getTile(table, row, col, tileRow, colors) {
