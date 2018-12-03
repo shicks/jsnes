@@ -184,6 +184,17 @@ class Main {
     }
 
     this.nes.loadROM(rom);
+
+    let init = this.getHash('init');
+    if (init) {
+      if (/^\/|\./.test(init)) throw new Error(`bad init: ${init}`);
+      this.init = await import(`../../ext/${init}.js`);
+      if (this.init.default) {
+        const t = this.init.default;
+        if (typeof t === 'function') t(this.nes);
+      }
+    }
+
     if (!this.getHash('noautostart')) this.start();
   }
 
