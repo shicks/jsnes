@@ -102,9 +102,9 @@ export class Debug {
     // ---
     this.holding = new HoldingPatternTracker(this);
     this.watches = {}; // {[addr]: {[break_#]: function()}}
-    this.breakpoints = new Uint8Array(0x10000);
+    this.breakpoints = new Uint16Array(0x10000);
     this.coverage = new Debug.Coverage(this.nes);
-    this.breakIf = () => true,
+    this.breakpointConditions = [() => true];
     this.breakIn = null;
     this.breakAtScanline = null;
     this.breakAtFrame = null;
@@ -132,7 +132,7 @@ export class Debug {
 
   growBreakpoints_(addr) {
     const size = 1 << (32-Math.clz32(addr))
-    const newBreakpoints = new Uint8Array(size);
+    const newBreakpoints = new Uint16Array(size);
     if (this.breakpoints) newBreakpoints.set(this.breakpoints);
     this.breakpoints = newBreakpoints;
   }
@@ -142,7 +142,7 @@ export class Debug {
    * @param {string} mem One of 'prg' or 'ram'
    * @param {string} modes A string made of 'r', 'w', and/or 'x'
    */
-  breakAt(addr, mem, modes) {
+  breakAt(addr, mem, modes, cond = undefined) {
     if (addr instanceof Array && addr.length == 1) addr = addr[0];
     if (!(addr instanceof Array)) addr = [addr, addr];
     if (addr.length < 3) addr = [addr[0], 1, addr[1]];
@@ -153,6 +153,12 @@ export class Debug {
     for (const mode of modes) {
       mask |= BREAKPOINT_MODES[mem + '-' + mode];
       if (mask != mask) throw new Error(`Bad mode ${mode} on ${mem}`);
+    }
+    if (cond) {
+      // NOTE: this isn't quite right - separate r/w/x or prg/chr/ram will
+      // clobber each other, but that's unlikely to ever matter.
+      mask |= this.breakpointConditions.length << 8;
+      this.breakpointConditions.push(cond);
     }
     for (let i = addr[0]; i <= addr[2]; i += addr[1]) {
       this.breakpoints[i] |= mask;
@@ -212,7 +218,7 @@ export class Debug {
 
     if (this.breakpoints) {
       if ((this.breakpoints[addr] & (bank != null ? BREAK_PRG_X : BREAK_RAM_X))
-         && this.breakIf(pc, 'x', opcode)) {
+         && this.breakpointConditions[this.breakpoints[addr] >> 8](pc)) {
         console.log(`break on execute ${bank ? 'PRG' : 'RAM'} $${addr.toString(16)}`)
         this.break = true;
       }
@@ -280,9 +286,8 @@ export class Debug {
       const mask = bank != null ? BREAK_PRG_R :
             op & MEM_PPU ? (op == Debug.PPU_RD ? BREAK_PPU_R : BREAK_PPU_W) :
             (op >> 4) & 3; // tricky: may include both read and write
-      if ((this.breakpoints[addr] & mask) &&
-          // NOTE: breakIf is not going to know it's PPU...?
-          this.breakIf(address, op & MEM_READ ? 'r' : 'w', value, this.banked(this.lastPc))) {
+      if ((this.breakpoints[addr] & mask)
+          && this.breakpointConditions[this.breakpoints[addr] >> 8](address)) {
         const opMask = op & (MEM_READ | MEM_WRITE);
         const type = opMask == MEM_READ ? 'read' :
             opMask == MEM_WRITE ? 'write' : 'read-write';
@@ -291,7 +296,7 @@ export class Debug {
                      } at ${this.banked(this.lastPc)}`);
         this.break = true;
       } else if ((op & MEM_WORD) && (this.breakpoints[addr + 1] & mask)
-                 && this.breakIf(address, 'r', value, this.banked(this.lastPc))) {
+                 && this.breakpointConditions[this.breakpoints[addr] >> 8](address)) {
         // NOTE: this can give the wrong PC immediately
         // after jumps?
         console.log(`break on read ${bank ? 'PRG' : 'RAM'} $${
