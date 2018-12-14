@@ -247,3 +247,5 @@ function download(data, name) {
   window.URL.revokeObjectURL(url);
   a.remove();
 }
+
+FileSystem.download = download;

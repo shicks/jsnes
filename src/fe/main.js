@@ -165,6 +165,10 @@ class Main {
     }
   }
 
+  download() {
+    FileSystem.download(this.rom, 'patched.nes');
+  }
+
   async handleLoaded(name, data) {
     if (this.running) this.stop();
     this.state.uiEnabled = true;
@@ -172,7 +176,7 @@ class Main {
     this.state.loading = false;
     this.romName = name;
 
-    let rom = new Uint8Array(data);
+    let rom = this.rom = new Uint8Array(data);
     let patch = this.getHash('patch');
     if (patch) {
       this.patch = await loadExt(patch);
@@ -365,7 +369,8 @@ const promptForNumbers = (text, callback) => {
 
 new Menu('File')
     // TODO - file manager
-    .addItem('Load ROM', () => main.load());
+    .addItem('Load ROM', () => main.load())
+    .addItem('Download ROM', () => main.download());
 new Menu('NES')
     // TODO - hard reset (need to figure out how)
     .addItem('Reset', () => main.nes.cpu.softReset());
