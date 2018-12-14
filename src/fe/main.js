@@ -175,8 +175,7 @@ class Main {
     let rom = new Uint8Array(data);
     let patch = this.getHash('patch');
     if (patch) {
-      if (/^\/|\./.test(patch)) throw new Error(`bad patch: ${patch}`);
-      this.patch = await import(`../../ext/${patch}.js`);
+      this.patch = await loadExt(patch);
       if (this.patch.default) {
         const p = this.patch.default;
         if (p && p.apply) p.apply(rom);
@@ -188,7 +187,7 @@ class Main {
     let init = this.getHash('init');
     if (init) {
       if (/^\/|\./.test(init)) throw new Error(`bad init: ${init}`);
-      this.init = await import(`../../ext/${init}.js`);
+      this.init = await loadExt(`../../ext/${init}.js`);
       if (this.init.default) {
         const t = this.init.default;
         if (typeof t === 'function') t(this.nes);
@@ -337,6 +336,14 @@ class Main {
       if (component) yield component;
     }
   }
+}
+
+const loadExt = (url) => {
+  if (/^\/|\./.test(url)) throw new Error(`bad extension url: ${url}`);
+  if (window.location.href.includes('github.io')) {
+    return import(`/${url}.js`);
+  }
+  return import(`../../ext/${url}.js`);
 }
 
 window.Debug = Debug;
