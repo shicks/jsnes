@@ -31,6 +31,12 @@ class Main {
     this.screen = new Screen(screen);
     // screen - onGenerateFrame => this.nes.frame() ?
 
+    this.hash = {};
+    for (const component of window.location.hash.substring(1).split('&')) {
+      const split = component.split('=');
+      this.hash[split[0]] = decodeURIComponent(split[1]);
+    }
+
     this.speakers = new Speakers({
       onBufferUnderrun: (actualSize, desiredSize) => {
         if (!this.state.running || this.state.paused) {
@@ -73,7 +79,7 @@ class Main {
         //          btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
       },
     });
-    if (!this.getHash('nodebug')) this.nes.debug = new Debug(this.nes);
+    if (!this.hash['nodebug']) this.nes.debug = new Debug(this.nes);
 
     this.frameTimer = new FrameTimer({
       onGenerateFrame: () => {
@@ -99,19 +105,19 @@ class Main {
 
     // window.addEventListener("resize", this.layout.bind(this));
     // this.layout();
-    this.load(this.getHash('rom'));
-    if (this.getHash('playback')) {
+    this.load(this.hash['rom']);
+    if (this.hash['playback']) {
       // TODO - add these params to the hash automatically?
-      const pb = this.startPlayback(this.getHash('playback'));
-      if (this.getHash('keyframe') != null) {
+      const pb = this.startPlayback(this.hash['playback']);
+      if (this.hash['keyframe'] != null) {
         pb.then(p => {
-          p.selectKeyframe(this.getHash('keyframe'));
+          p.selectKeyframe(this.hash['keyframe']);
           p.seekToKeyframe();
         });
       }
     }
-    if (this.getHash('breakAt')) {
-      const b = this.getHash('breakAt').split(':');
+    if (this.hash['breakAt']) {
+      const b = this.hash['breakAt'].split(':');
       b[0] = Number.parseInt(b[0], 16);
       if (!b[1]) b[1] = 'prg';
       if (!b[2]) b[2] = 'x';
@@ -122,16 +128,6 @@ class Main {
   setFrameSkip(skip) {
     this.frameTimer.frameSkip = skip;
     this.speakers.enabled = false;
-  }
-
-  getHash(key) {
-    for (const component of window.location.hash.substring(1).split('&')) {
-      const split = component.split('=');
-      if (split[0] === key) {
-        return decodeURIComponent(split[1]);
-      }
-    }
-    return undefined;
   }
 
   setHash(key, value) {
@@ -148,6 +144,7 @@ class Main {
     }
     if (key) components.push(`${key}=${encodeURIComponent(value)}`);
     window.location.hash = '#' + components.join('&');
+    this.hash[key] = value;
   }
 
   async load(romName = undefined) {
@@ -177,18 +174,18 @@ class Main {
     this.romName = name;
 
     let rom = this.rom = new Uint8Array(data);
-    let patch = this.getHash('patch');
+    let patch = this.hash['patch'];
     if (patch) {
       this.patch = await loadExt(patch);
       if (this.patch.default) {
         const p = this.patch.default;
-        if (p && p.apply) p.apply(rom);
+        if (p && p.apply) p.apply(rom, this.hash);
       }
     }
 
     this.nes.loadROM(rom);
 
-    let init = this.getHash('init');
+    let init = this.hash['init'];
     if (init) {
       if (/^\/|\./.test(init)) throw new Error(`bad init: ${init}`);
       this.init = await loadExt(`../../ext/${init}.js`);
@@ -198,7 +195,7 @@ class Main {
       }
     }
 
-    if (!this.getHash('noautostart')) this.start();
+    if (!this.hash['noautostart']) this.start();
   }
 
   start() {

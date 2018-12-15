@@ -14,6 +14,8 @@ const BUTTONS = {
   // TODO(sdh): custom commands, like save/load state?
 };
 
+// TODO - UI to map (and then store in localstorage)?
+
 export class GamepadController {
   constructor(main) {
     this.main = main;
