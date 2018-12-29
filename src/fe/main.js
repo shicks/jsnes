@@ -179,7 +179,7 @@ class Main {
       this.patch = await loadExt(patch);
       if (this.patch.default) {
         const p = this.patch.default;
-        if (p && p.apply) p.apply(rom, this.hash);
+        if (p && p.apply) await p.apply(rom, this.hash);
       }
     }
 
@@ -188,7 +188,7 @@ class Main {
     let init = this.hash['init'];
     if (init) {
       if (/^\/|\./.test(init)) throw new Error(`bad init: ${init}`);
-      this.init = await loadExt(`../../ext/${init}.js`);
+      this.init = await loadExt(init);
       if (this.init.default) {
         const t = this.init.default;
         if (typeof t === 'function') t(this.nes);
@@ -305,6 +305,12 @@ class Main {
     for (const component of this.components()) {
       if (component.handleKey(e)) return true;
     }
+    for (const key in this.functions || []) {
+      if (e.key == key) {
+        this.functions[key]();
+        return true;
+      }
+    }
     return false;
   }
 
@@ -321,9 +327,10 @@ class Main {
 
   track(type) {
     this.nes.debug.coverage.clear();
-    main.functions[67] = () => console.log(this.nes.debug.coverage.expectCovered()); // C (Covered)
-    main.functions[85] = () => console.log(this.nes.debug.coverage.expectUncovered()); // U (Uncov)
-    main.functions[86] = () => console.log(this.nes.debug.coverage.candidates(type, true)); // V (List)
+    main.functions = main.functions || [];
+    main.functions['c'] = () => console.log(this.nes.debug.coverage.expectCovered()); // C (Covered)
+    main.functions['u'] = () => console.log(this.nes.debug.coverage.expectUncovered()); // U (Uncov)
+    main.functions['v'] = () => console.log(this.nes.debug.coverage.candidates(type, true)); // V (List)
   };
 
   watch(...addrs) {
