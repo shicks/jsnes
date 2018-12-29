@@ -108,6 +108,7 @@ export class Debug {
     this.breakIn = null;
     this.breakAtScanline = null;
     this.breakAtFrame = null;
+    this.breakAtStack = null;
     this.break = false;
     this.mt = new Debug.MemTracker(this.nes);
     this.origin = new Debug.OriginTracker(this.nes);
@@ -142,7 +143,20 @@ export class Debug {
    * @param {string} mem One of 'prg' or 'ram'
    * @param {string} modes A string made of 'r', 'w', and/or 'x'
    */
-  breakAt(addr, mem, modes, cond = undefined) {
+  breakAt(addr, mem = undefined, modes = undefined, cond = undefined) {
+    if (typeof mem == 'function' && !mem && !modes) {
+      cond = mem;
+      mem = undefined;
+    }
+    if (!mem && !modes) {
+      if (addr > 0xffff) {
+        mem = 'prg';
+        modes = 'x';
+      } else {
+        mem = 'ram';
+        modes = 'w';
+      }
+    }
     if (addr instanceof Array && addr.length == 1) addr = addr[0];
     if (!(addr instanceof Array)) addr = [addr, addr];
     if (addr.length < 3) addr = [addr[0], 1, addr[1]];
@@ -163,6 +177,10 @@ export class Debug {
     for (let i = addr[0]; i <= addr[2]; i += addr[1]) {
       this.breakpoints[i] |= mask;
     }
+  }
+
+  stepOut() {
+    this.breakAtStack = this.nes.cpu.REG_SP;
   }
 
   clearTrace() {
@@ -225,6 +243,10 @@ export class Debug {
     }
     if (this.breakIn != null && --this.breakIn == 0) {
       this.breakIn = null;
+      this.break = true;
+    }
+    if (this.breakAtStack != null && this.nes.cpu.REG_SP > this.breakAtStack) {
+      this.breakAtStack = null;
       this.break = true;
     }
     // TODO - optionally store registers (add a bit to the selector to indicate

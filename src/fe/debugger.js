@@ -196,6 +196,7 @@ export class Trace extends Component {
 
     this.registerKey('f', 'Advance Frame', () => this.advanceFrame());
     this.registerKey('t', 'Advance Tile Row', () => this.advanceTileRow());
+    this.registerKey('o', 'Step Out', () => this.stepOut());
     this.registerKey('g', 'Step', () => this.advance(1));
   }
 
@@ -217,6 +218,11 @@ export class Trace extends Component {
 
   advanceFrame() {
     this.nes.debug.breakAtScanline = -1;
+    this.start();
+  }
+
+  stepOut() {
+    this.nes.debug.stepOut();
     this.start();
   }
   
