@@ -144,7 +144,7 @@ export class Debug {
    * @param {string} modes A string made of 'r', 'w', and/or 'x'
    */
   breakAt(addr, mem = undefined, modes = undefined, cond = undefined) {
-    if (typeof mem == 'function' && !mem && !modes) {
+    if (typeof mem == 'function' && !modes) {
       cond = mem;
       mem = undefined;
     }

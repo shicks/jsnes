@@ -202,7 +202,8 @@ class Main {
     if (!this.state.paused) return;
     this.state.paused = false;
     this.frameTimer.start();
-    this.speakers.start();
+    this.speakers.enabled = false;
+    //this.speakers.start();
     this.fpsInterval = setInterval(() => {
       bufferLog(`FPS: ${this.nes.getFPS()}`);
     }, 1000);
