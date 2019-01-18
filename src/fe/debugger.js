@@ -549,7 +549,8 @@ class MoviePanel extends Component {
   updateKeyframe() {
     const kf = this.currentKeyframe;
     const kft = this.keyframes.length;
-    this.keyframeStatus.textContent = `${kf + 1} / ${kft}`;
+    this.keyframeStatus.textContent =
+        `${String(kf + 1).padStart(String(kft).length, 0)} / ${kft}`;
     if (!kft) return;
     this.keyframeSnapshot.src = this.keyframes[kf].imageDataUrl();
     const frame = this.movie.frame();
