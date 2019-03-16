@@ -115,6 +115,7 @@ export class Debug {
     this.frame = 0;
     this.scanline = 0;
     this.lastPc = 0;
+    this.sourceMap = new SourceMap();
 
     // for comparisons
     this.compare = null;
@@ -583,8 +584,9 @@ export class Debug {
         // TODO - rewrite this to call formatInstruction
         const opinf = opdata[op];
         const instr = opmeta.instname[opinf & 0xff];
-        let pc = (romaddr != null ? romaddr : addr).toString(16);
-        pc = ('$' + pc.padStart(4 + (romaddr != null), '0')).padStart(9);
+        const pc = romaddr != null ? romaddr : addr;
+        let pcStr = pc.toString(16);
+        pcStr = ('$' + pcStr.padStart(4 + (romaddr != null), '0')).padStart(9);
         let bytes = [op];
         let arg = 0;
         let factor = 0;
@@ -604,10 +606,11 @@ return;
         } else {
           arg = '??'; // don't know ram
         }
-        const mode = opmeta.addrFmt[(opinf >> 8) & 0xff](romaddr, arg).padEnd(8);
-        bytes = bytes.map(x => x.toString(16).padStart(2, 0));
-        while (bytes.length < 3) bytes.push('  ');
-        parts.push(`\n ${frame}:${scanline}${pc}: ${bytes.join(' ')} ${stack}${instr} ${mode}`);
+        const mode = opmeta.addrFmt[(opinf >> 8) & 0xff](romaddr, arg);
+        bytes = bytes.map(x => x.toString(16).padStart(2, 0)).join(' ').padEnd(8);
+        let {label, code} = this.sourceMap.map(pc, bytes, instr, mode);
+        if (label) parts.push(label.replace(/\n/g, '\n' + ' '.repeat(28)));
+        parts.push(`\n ${frame}:${scanline}${pcStr}: ${bytes} ${stack}${code.padEnd(12)}`);
       },
       mem: (addr, romaddr, read, write) => {
         let a = (typeof romaddr == 'number' ? romaddr : addr).toString(16);
@@ -743,6 +746,54 @@ class CallStackTracker {
     while (stack.length && stack[stack.length - 1].sp <= sp) top = stack.pop();
     return top && top.sp == sp && top.pc == pc ? top.data : undefined;
   }
+}
+
+
+export class SourceMap {
+  constructor(text = '') {
+    /** @const {!Array<{label: (string|undefined),
+                        bytes: (string|undefined),
+                        inst: (string|undefined)}>} */
+    this.loci = [];
+
+    let label = '';
+    for (let line of text.split('\n')) {
+      line = line.replace(/;.*/, '').trimEnd();
+      if (!line || /^\s*define /.test(line)) continue;
+      let [, address, rest] = /^[-+ ]+\$([0-9a-f]+)\s*(.*)/i.exec(line) || [];
+      if (address) {
+        address = Number.parseInt(address, 16);
+        rest = rest.trim();
+        // is it code or data?
+        let [, bytes, inst] = /^((?:[0-9a-f]{2}\s*)+):\s*([a-z]{3}.*)/i.exec(rest) || []; 
+        if (bytes) {
+          bytes = bytes.trim();
+          this.loci[address] = {label, bytes, inst};
+        } else {
+          if (label) {
+            this.loci[address] = {label};
+          }
+        }
+        label = '';
+      } else {
+        let [, newLabel] = /^([a-z0-9_]+):?/i.exec(line) || [];
+        if (newLabel) label = `${label}\n${newLabel}:`;
+      }
+    }
+  }
+
+  map(pc, bytes, inst, mode) {
+    const locus = this.loci[pc];
+    if (!locus || (locus.bytes && locus.bytes !== bytes.trim())) {
+      // no match
+      return {code: `${inst} ${mode}`};
+    }
+    return {
+      label: locus.label || '',
+      code: locus.inst || `${inst} ${mode}`,
+    };
+  }
+
 }
 
 

@@ -1,5 +1,5 @@
 import {Controller} from '../controller.js';
-import {Debug} from '../debug.js';
+import {Debug, SourceMap} from '../debug.js';
 import {NES} from '../nes.js';
 import {Playback, Recorder, Movie} from '../movie.js';
 import {Screen} from './screen.js';
@@ -406,6 +406,11 @@ new Menu('Movie')
 
 new Menu('Debug')
     .addItem('Trace', () => new debug.Trace(main.nes, () => main.start()).step())
+    .addItem('Source Map', async () => {
+      const {data} = await main.fs.pick('Select assembly source');
+      const decoder = new TextDecoder('utf-8');
+      main.nes.debug.sourceMap = new SourceMap(decoder.decode(data));
+    })
     .addItem('Watch Page', () => promptForNumbers('Pages', pages => {
       for (const page of pages) new debug.WatchPage(main.nes, page);
     }))
