@@ -375,6 +375,7 @@ export class NROM {
   // Return the address into the ROM for the given bank and memory address.  This
   // is used for reconstructing CPU logs from traces.
   prgRomAddress(bank, addr) {
+    if (bank == null) bank = this.prgRomBank(addr);
     const a = (bank << 13) | (addr & 0x1fff);
 //    if (a == 0x383c6) debugger;
     return a;

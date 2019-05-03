@@ -179,7 +179,10 @@ class Main {
       this.patch = await loadExt(patch);
       if (this.patch.default) {
         const p = this.patch.default;
-        if (p && p.apply) await p.apply(rom, this.hash);
+        if (p && p.apply) {
+          await p.apply(rom, this.hash,
+                        `../../ext/${patch.replace(/\/[^/]*$/, '')}/`);
+        }
       }
     }
 
@@ -349,9 +352,9 @@ class Main {
 
 const loadExt = (url) => {
   if (/^\/|\./.test(url)) throw new Error(`bad extension url: ${url}`);
-  if (window.location.href.includes('github.io')) {
-    return import(`/${url}.js`);
-  }
+  // if (window.location.href.includes('github.io')) {
+  //   return import(`/${url}.js`);
+  // }
   return import(`../../ext/${url}.js`);
 }
 
