@@ -180,8 +180,9 @@ class Main {
       if (this.patch.default) {
         const p = this.patch.default;
         if (p && p.apply) {
-          await p.apply(rom, this.hash,
+          const newRom = await p.apply(rom, this.hash,
                         `../../ext/${patch.replace(/\/[^/]*$/, '')}/`);
+          if (newRom) rom = newRom;
         }
       }
     }

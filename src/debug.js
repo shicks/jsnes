@@ -593,7 +593,7 @@ export class Debug {
         if (romaddr != null) { // can't really look up RAM
           for (let i = 0; i < opmeta.addrSize[(opinf >> 8) & 0xff]; i++) {
             romaddr++;
-if(romaddr>0x3ffff){
+if(romaddr>=this.nes.rom.rom.length){
 console.log('BAD!');
 debugger;
 return;
