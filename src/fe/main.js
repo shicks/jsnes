@@ -382,7 +382,8 @@ new Menu('File')
     .addItem('Download ROM', () => main.download());
 new Menu('NES')
     // TODO - hard reset (need to figure out how)
-    .addItem('Reset', () => main.nes.cpu.softReset());
+    .addItem('Reset', () => main.nes.cpu.softReset())
+    .addItem('Clear gamepads', () => main.gamepadController.clearDefaults());
 new Menu('Movie')
     .addItem('Playback', async () => {
       
@@ -425,7 +426,8 @@ new Menu('Debug')
     .addItem('CHR Viewer', () => promptForNumbers('Banks', banks => {
       new debug.ChrRomViewer(main.nes, banks);
     }))
-    .addItem('Virtual Controllers', () => new debug.ControllerPanel(main.nes));
+    .addItem('Virtual Controllers', () => new debug.ControllerPanel(main.nes))
+    .addItem('Timer', () => new debug.TimerPanel());
 
 // TODO - new speed debugging?
 //  - NOTE - movie came out okay, but there are a few glitches.

@@ -810,3 +810,61 @@ const BUTTONS = [
   ['B', Controller.BUTTON_B],
   ['A', Controller.BUTTON_A],
 ];
+
+export class TimerPanel extends Component {
+  constructor() {
+    super();
+    this.started = 0;
+    this.registerKey('1', 'Start', () => this.start());
+    this.registerKey('2', 'Pause', () => this.pause());
+    this.registerKey('3', 'Stop', () => this.stop());
+    this.frame();
+  }
+
+  start() {
+    if (this.started > 0) return;
+    this.started = new Date().getTime();
+  }
+
+  pause() {
+    if (this.started > 0) {
+      this.started -= new Date().getTime();
+    } else {
+      this.started += new Date().getTime();
+    }
+  }
+
+  stop() {
+    if (this.started > 0) {
+      this.pause();
+    } else {
+      this.started = 0;
+    }
+  }
+
+  time() {
+    function pad(x, n) { return String(x).padStart(n, '0'); }
+    let delta = new Date().getTime() - this.started;
+    const ms = delta % 1000;
+    delta = (delta - ms) / 1000;
+    const s = delta % 60;
+    delta = (delta - s) / 60;
+    const m = delta % 60;
+    delta = (delta - m) / 60;
+    const h = delta;
+    if (h) {
+      return `${h}:${pad(m, 2)}:${pad(s, 2)}.${pad(ms, 3)}`;
+    } else if (m) {
+      return `${m}:${pad(s, 2)}.${pad(ms, 3)}`;
+    }
+    return `${s}.${pad(ms, 3)}`;
+  }
+
+  frame() {
+    if (this.started > 0) {
+      this.element.textContent = this.time();
+    } else if (this.started === 0) {
+      this.element.textContent = '0.000';
+    }
+  }
+}
