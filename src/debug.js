@@ -116,10 +116,27 @@ export class Debug {
     this.scanline = 0;
     this.lastPc = 0;
     this.sourceMap = new SourceMap();
+    this.sourceTracker = new Debug.SourceTracker(nes);
+
+    this.debuggers = [
+      this.sourceTracker,
+    ];
 
     // for comparisons
     this.compare = null;
     this.compareMode = 0;
+  }
+
+  dataFlow(addr) {
+    function fmt(x) {
+      return '$' + (x < 0 ? (~x).toString(16).padStart(5, '0') :
+                    x.toString(16).padStart(x < 255 ? 2 : 4, '0'));
+    }
+    const written = this.sourceTracker.written[addr];
+    const source = this.sourceTracker.sources[addr];
+    let out = `${fmt(addr)} <= ${source == null ? '?' : fmt(source)}`;
+    if (written != null) out += ` at ${fmt(~written)}`;
+    return out;
   }
 
   recordComparison(mem) {
@@ -201,7 +218,7 @@ export class Debug {
   logCpu(opcode, pc) {
     // Check if we're waiting for an interrupt
     // TODO - break out of "waiting" if the pattern breaks
-    //if (this.holding.holding) return;
+    if (this.holding.holding) return;
 
     // If we've gotten to this point then we're not ignoring anything.
     this.lastPc = pc;
@@ -218,6 +235,9 @@ export class Debug {
     if (bank != null && this.holding.check(addr) && this.breakAtScanline == null) {
       if (!wasHolding) this.buffer[this.pos++] = Debug.ELIDED;
       return;
+    }
+    for (const d of this.debuggers) {
+      if (d.logCpu) d.logCpu(opcode, addr);
     }
 
     this.coverage.cov[addr] |= (bank != null ? BREAK_PRG_X : BREAK_RAM_X);
@@ -263,6 +283,10 @@ export class Debug {
     this.coverage.cov[addr] |= (bank != null ? BREAK_PRG_R :
                                 (op & MEM_READ ? BREAK_RAM_R : 0) |
                                 (op & MEM_WRITE ? BREAK_RAM_W : 0));
+
+    for (const d of this.debuggers) {
+      if (d.logMem) d.logMem(op, address, value, write);
+    }
 
     // helper for comparing traces to find emulation bugs e.g. after snapshot restores
     if (this.compare && this.compare.has(address)) {
@@ -891,6 +915,99 @@ class TracePosition {
   }
 }
 
+
+Debug.SourceTracker = class {
+  constructor(nes) {
+    this.nes = nes;
+    this.sources = new Array(0x8003).fill(null);
+    this.written = new Array(0x8003).fill(null);
+    this.reads = [];
+    this.writes = [];
+    this.pc = 0;
+
+    const a = 0x8000;
+    const x = 0x8001;
+    const y = 0x8002;
+
+    const invalidate = (addr) => this.record(addr, null);
+    const read = (reg) => (addr) => this.record(reg, addr);
+    const copy = (reg) => (addr) => this.record(addr, this.sources[reg]);
+    const copyTo = (reg) => (addr) => this.record(reg, this.sources[addr]);
+
+    this.dataFlow = {
+      0xa9: (pc) => this.record(a, ~pc - 1), // LDA IMM
+      0xa5: () => this.reads = [read(a)], // LDA ZP
+      0xb5: () => this.reads = [read(a)], // LDA ZPX
+      0xad: () => this.reads = [read(a)], // LDA ABS
+      0xbd: () => this.reads = [read(a)], // LDA ABX
+      0xb9: () => this.reads = [read(a)], // LDA ABY
+      0xa1: () => this.reads = [, read(a)], // LDA INX
+      0xb1: () => this.reads = [, read(a)], // LDA INY
+      
+      0xa2: (pc) => this.record(x, ~pc - 1), // LDX IMM
+      0xa6: () => this.reads = [read(x)], // LDX ZP
+      0xb6: () => this.reads = [read(x)], // LDX ZPY
+      0xae: () => this.reads = [read(x)], // LDX ABS
+      0xbe: () => this.reads = [read(x)], // LDX ABY
+
+      0xa0: (pc) => this.record(y, ~pc - 1), // LDY IMM
+      0xa4: () => this.reads = [read(y)], // LDY ZP
+      0xb4: () => this.reads = [read(y)], // LDY ZPX
+      0xac: () => this.reads = [read(y)], // LDY ABS
+      0xbc: () => this.reads = [read(y)], // LDY ABX
+
+      0x85: () => this.writes = [copy(a)], // STA ZP 
+      0x95: () => this.writes = [copy(a)], // STA ZPX
+      0x8d: () => this.writes = [copy(a)], // STA ABS
+      0x9d: () => this.writes = [copy(a)], // STA ABX
+      0x99: () => this.writes = [copy(a)], // STA ABY
+      0x81: () => this.writes = [copy(a)], // STA INX
+      0x91: () => this.writes = [copy(a)], // STA INY
+  
+      0x86: () => this.writes = [copy(x)], // STX ZP
+      0x96: () => this.writes = [copy(x)], // STX ZPY
+      0x8e: () => this.writes = [copy(x)], // STX ABS
+
+      0x84: () => this.writes = [copy(y)], // STY ZP
+      0x94: () => this.writes = [copy(y)], // STY ZPX
+      0x8c: () => this.writes = [copy(y)], // STY ABS
+
+      0xaa: () => this.record(x, a), // TAX
+      0x8a: () => this.record(a, x), // TXA
+      0xa8: () => this.record(y, a), // TAY
+      0x98: () => this.record(a, y), // TYA
+
+      0x48: () => this.writes = [copy(a)], // PHA
+      0x68: () => this.reads = [copyTo(a)], // PLA
+    };
+
+  }
+
+  record(to, from) {
+    if (to === from) return;
+    this.sources[to] = from;
+    this.written[to] = this.pc;
+  }
+
+  logCpu(op, pc) {
+    const fn = this.dataFlow[op];
+    if (fn) fn(this.pc = pc);
+  }
+
+  logMem(op, address) {
+    const bank = op & MEM_READ ? this.nes.mmap.prgRomBank(address) : null;
+    const addr = bank != null ? this.nes.mmap.prgRomAddress(bank, address) :
+            address < 0x2000 ? address & 0x7ff : address;
+    if (op & MEM_READ) {
+      const fn = this.reads.shift();
+      if (fn) fn(address < 0x8000 ? addr : ~addr);
+    }
+    if (op & MEM_WRITE) {
+      const fn = this.writes.shift();
+      if (fn) fn(addr);
+    }
+  }
+}
 
 Debug.OriginTracker = class {
   constructor(nes) {
