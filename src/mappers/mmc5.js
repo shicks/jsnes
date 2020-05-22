@@ -16,48 +16,49 @@ export class MMC5 extends NROM {
 
     this.reg5 = new Array(0x1000).fill(0); // last write
 
-    // State
-    this.sramEnabled = false;
-
     // this.prgMode = 0; // 0|1|2|3
     // this.chrMode = 0; // 0|1|2|3
     // this.
     // this.mulA = 0; // multiplier A
     // this.mulB = 0; // multiplier B
 
+    this.reg5[0x100] = 3;    // default to mode 3
+    this.reg5[0x101] = 3;    // default to mode 3
     this.reg5[0x113] = 0x00; // 6000..7fff bank
     this.reg5[0x114] = 0xff; // 8000..9fff bank
     this.reg5[0x115] = 0xff; // a000..bfff bank
     this.reg5[0x116] = 0xff; // c000..dfff bank
     this.reg5[0x117] = 0xff; // e000..ffff bank
     this.enableSram = false;
+  }
 
-    this.updatePrgBanks();
+  initializeChrRomBanks() {
+    super.initializeChrRomBanks();
     this.updateChrBanks();
   }
 
-  initializeChrRomSwitcher() {
-    // NOTE: we actually need three rom switchers: one for data, one for
-    // tile rom, and one for 8x16 sprites.
-    if (this.nes.rom.vrom.length) {
-      this.nes.ppu.importChrRom(this.nes.rom.vrom);
-      this.ppuDataSwitcher = 
-          new utils.RomBankSwitcher(this.nes.ppu.patternTableFull, 0x2000, 512);
-      this.chrRomSwitcher =
-          new utils.RomBankSwitcher(this.nes.ppu.patternTableFull, 0x2000, 512);
-    } else {
-      this.chrRam = new Uint16Array(0x2000);
-      this.nes.ppu.patternTableFull = this.nes.ppu.patternTable = this.chrRam;
-    }
-  }
+  //   // NOTE: we actually need three rom switchers: one for data, one for
+  //   // tile rom, and one for 8x16 sprites.
+  //   if (this.nes.rom.vrom.length) {
+  //     this.nes.ppu.importChrRom(this.nes.rom.vrom);
+  //     this.ppuDataSwitcher = 
+  //         new utils.RomBankSwitcher(this.nes.ppu.patternTableFull, 0x2000, 512);
+  //     this.chrRomSwitcher =
+  //         new utils.RomBankSwitcher(this.nes.ppu.patternTableFull, 0x2000, 512);
+  //   } else {
+  //     this.chrRam = new Uint16Array(0x2000);
+  //     this.nes.ppu.patternTableFull = this.nes.ppu.patternTable = this.chrRam;
+  //   }
+  // }
 
   initializePrgRam() {
     this.prgRam = new Uint8Array(0x2000);
+    this.allPrgPages[0] = this.prgRam.subarray(0, 0x2000);
     this.fillPrgMirror([[0x6000, this.bankedPrgWrite, 0],
                         [0x8000, this.bankedPrgWrite, 1],
                         [0xa000, this.bankedPrgWrite, 2],
                         [0xc000, this.bankedPrgWrite, 3]],
-                       0x2000, 1, this.writePrg);
+                       0x2000, 1, this.prgWrite);
   }
   initializePrgRomMapping() {
     this.fillPrgMirror([[0x6000, this.bankedPrgRead, 0],
@@ -65,25 +66,26 @@ export class MMC5 extends NROM {
                         [0xa000, this.bankedPrgRead, 2],
                         [0xc000, this.bankedPrgRead, 3],
                         [0xe000, this.bankedPrgRead, 4]],
-                       0x2000, 1, this.loadPrg);
+                       0x2000, 1, this.prgLoad);
   }
 
   bankedPrgRead(bank, addr) {
     return this.prgBanks[bank][addr & 0x1fff];
   }
   bankedPrgWrite(bank, value, addr) {
-    this.prgBanks[bank][addr & 0x1fff] = value;
+    const prg = this.prgBanks[bank];
+    if (prg.buffer === this.prgRam.buffer) prg[addr & 0x1fff] = value;
   }
 
-  initializePpuRegister() {
-    super.initializePpuRegister();
+  initializePpuRegisters() {
+    super.initializePpuRegisters();
     // Need to keep track of sprite height
     const updatePpuCtrl = (value) => {
       this.nes.ppu.writePpuCtrl(value);
-      this.updateSpriteMode();
+      this.updateSpriteHeight();
     };
     for (let a = 0x2000; a < 0x4000; a += 8) {
-      this.writePrg[a] = updatePpuCtrl;
+      this.prgWrite[a] = updatePpuCtrl;
     }
   }
 
@@ -114,10 +116,18 @@ export class MMC5 extends NROM {
     for (const [addrs, reg] of regs) {
       const bound = reg.bind(this);
       for (const addr of addrs) {
-        this.writePrg[addr] = bound;
+        this.prgWrite[addr] = bound;
       }
     }
   }
+
+  setExramMode(value) {
+    this.reg5[0x104] = value;
+    //this.
+  }
+
+  setNametableMapping(value) {}
+  setFillMode(value) {}
 
   storeReg5(value, addr) {
     // Misc - store the value, but don't do anything with it
@@ -134,16 +144,23 @@ export class MMC5 extends NROM {
     if (page < 0x80) {
       // maybe resize this.prgRam.
       page = page & 0x0f; // only 16 pages allowed
-      if (this.prgRam.size < ((page + count) << 13)) {
+      if (this.prgRam.length < ((page + count) << 13)) {
         const old = this.prgRam;
         this.prgRam = new Uint8Array((page + count) << 13);
         this.prgRam.subarray(0, old.length).set(old);
-        for (let i = 0; i < this.prgRam.size; i += 0x2000) {
+        for (let i = 0; i < this.prgRam.length; i += 0x2000) {
           // rebuild the table of all pages.
           this.allPrgPages[i >>> 13] = this.prgRam.subarray(i, i + 0x2000);
         }
       }
     }
+
+    // If the page is > the max, we need a little more work to normalize it.
+    if (page >= this.allPrgPages.length) {
+      const z = Math.clz32((this.allPrgPages.length & 0x7f) - 1);
+      page = 0x80 | page & ((1 << (32 - z)) - 1);
+    }
+
     super.swapPrg8k(bank, page, count);
   }
 
@@ -156,22 +173,22 @@ export class MMC5 extends NROM {
     const mode = this.reg5[0x100] & 3;
     this.swapPrg8k(0, this.reg5[0x113] & 0x7f, 1);
     switch (mode) {
-    case 0: // 8k pages
+    case 3: // 8k pages
       this.swapPrg8k(1, this.reg5[0x114], 1);
       this.swapPrg8k(2, this.reg5[0x115], 1);
       this.swapPrg8k(3, this.reg5[0x116], 1);
       this.swapPrg8k(4, this.reg5[0x117] | 0x80, 1); // always rom
       break;
-    case 1: // 16k lower, 8k upper
+    case 2: // 16k lower, 8k upper
       this.swapPrg8k(1, this.reg5[0x115], 2);
       this.swapPrg8k(3, this.reg5[0x116], 1);
       this.swapPrg8k(4, this.reg5[0x117] | 0x80, 1);
       break;
-    case 2: // 16k pages
+    case 1: // 16k pages
       this.swapPrg8k(1, this.reg5[0x115], 2);
       this.swapPrg8k(3, this.reg5[0x117] | 0x80, 2);
       break;
-    case 3: // 32k page
+    case 0: // 32k page
       this.swapPrg8k(1, this.reg5[0x117] | 0x80, 4);
       break;
     default:
@@ -218,8 +235,12 @@ export class MMC5 extends NROM {
     this.updatePrgBanks();
   }
 
-  initializePrgRomSwitcher() {
-    this.prgRomSwitcher = new utils.RomBankSwitcher(this.nes.rom.rom, 0xa000);
+  initializePrgRomBanks() {
+    const rom = this.nes.rom.rom;
+    for (let i = 0; i < rom.length; i += 8192) {
+      this.allPrgPages[0x80 | i >> 13] = rom.subarray(i, i + 8192);
+    }
+    this.updatePrgBanks();
   }
 
   initializeRam() {
@@ -246,101 +267,119 @@ export class MMC5 extends NROM {
     this.prgRom = this.prgRomSwitcher.buffer();
   }
 
-  initializePrgRom() {
-    this.loadPrgPage(0x8000, 0xff, 0x2000);
-    this.loadPrgPage(0xa000, 0xff, 0x2000);
-    this.loadPrgPage(0xc000, 0xff, 0x2000);
-    this.loadPrgPage(0xe000, 0xff, 0x2000);
+  // initializePrgRom() {
+  //   this.loadPrgPage(0x8000, 0xff, 0x2000);
+  //   this.loadPrgPage(0xa000, 0xff, 0x2000);
+  //   this.loadPrgPage(0xc000, 0xff, 0x2000);
+  //   this.loadPrgPage(0xe000, 0xff, 0x2000);
+  // }
+
+  // initializeRegisters() {
+  //   // NOTE: Using a lookup table here may be less efficient than
+  //   // a bunch of nested if's, but there are so many that it might
+  //   // actually have broken even already.
+  //   this.write5[0x104] = (value) => this.updateExram();
+  //   this.write5[0x105] = (value) => {
+  //     this.nametable_mode = value;
+  //     this.nametable_type[0] = value & 3;
+  //     this.load1kVromBank(value & 3, 0x2000);
+  //     value >>= 2;
+  //     this.nametable_type[1] = value & 3;
+  //     this.load1kVromBank(value & 3, 0x2400);
+  //     value >>= 2;
+  //     this.nametable_type[2] = value & 3;
+  //     this.load1kVromBank(value & 3, 0x2800);
+  //     value >>= 2;
+  //     this.nametable_type[3] = value & 3;
+  //     this.load1kVromBank(value & 3, 0x2c00);
+  //   };
+  //   // this.write5[0x106] = (value) => this.fill_chr = value;
+  //   // this.write5[0x107] = (value) => this.fill_pal = value & 3;
+  //   this.write5[0x113] = () => this.updatePrg();
+  //   this.write5[0x114] = () => this.updatePrg();
+  //   this.write5[0x115] = () => this.updatePrg();
+  //   this.write5[0x116] = () => this.updatePrg();
+  //   this.write5[0x117] = () => this.updatePrg();
+  //   // this.write5[0x113] = (value) => this.SetBank_SRAM(3, value & 3);
+  //   for (let address = 0x5114; address <= 0x5117; address++) {
+  //     this.write5[address & 0xfff] = (value) => this.SetBank_CPU(address, value);
+  //   }
+  //   for (let address = 0x5120; address <= 0x5127; address++) {
+  //     this.write5[address & 0xfff] = (value) => {
+  //       this.chr_mode = 0;
+  //       this.chr_page[0][address & 7] = value;
+  //       this.SetBank_PPU();
+  //     };
+  //   }
+  //   for (let address = 0x5128; address <= 0x512b; address++) {
+  //     this.write5[address & 0xfff] = (value) => {
+  //       this.chr_mode = 1;
+  //       this.chr_page[1][(address & 3) + 0] = value;
+  //       this.chr_page[1][(address & 3) + 4] = value;
+  //       this.SetBank_PPU();
+  //     };
+  //   }
+  //   this.write5[0x200] = (value) => this.split_control = value;
+  //   this.write5[0x201] = (value) => this.split_scroll = value;
+  //   this.write5[0x202] = (value) => this.split_page = value & 0x3f;
+  //   this.write5[0x203] = (value) => {
+  //     this.irq_line = value;
+  //     this.nes.cpu.ClearIRQ();
+  //   };
+  //   this.write5[0x204] = (value) => {
+  //     this.irq_enable = value;
+  //     this.nes.cpu.ClearIRQ();
+  //   };
+  //   this.write5[0x205] = (value) => this.mult_a = value;
+  //   this.write5[0x206] = (value) => this.mult_b = value;
+  //   for (let address = 0x5000; address <= 0x5015; address++) {
+  //     this.write5[address & 0xfff] =
+  //         (value) => this.nes.papu.exWrite(address, value);
+  //   }
+  //   for (let address = 0x5c00; address <= 0x5fff; address++) {
+  //     this.write5[address & 0xfff] = (value) => {
+  //       if (this.graphic_mode === 2) {
+  //         // ExRAM
+  //         // vram write
+  //       } else if (this.graphic_mode !== 3) {
+  //         // Split,ExGraphic
+  //         if (this.irq_status & 0x40) {
+  //           // vram write
+  //         } else {
+  //           // vram write
+  //         }
+  //       }
+  //     };
+  //   }
+  // }
+
+  // Update this because 6000 is bank 0.
+  prgRomBank(addr) {
+    // TODO - handle ram and exram better?
+    if (addr < 0x6000) return null;
+    return this.prgBanks[(addr - 0x6000) >>> 13].byteOffset >>> 13;
+  }
+  prgRomAddress(bank, addr) {
+    if (bank == null) bank = this.prgRomBank(addr);
+    const a = (bank << 13) | (addr & 0x1fff);
+    return a;
   }
 
-  updatePrgBanks() {
-    // TODO - update the bank switcher based on contents of 5113..5117?
-  }
-  updateChrBanks() {
-    
-  }
-  updateExram() {
-    
+  writeExtSavestate() {
+    return ExtSavestate.of({
+      reg5: this.reg5,
+      enableSram: this.enableSram,
+    }).serialize();
   }
 
-
-
-  initializeRegisters() {
-    // NOTE: Using a lookup table here may be less efficient than
-    // a bunch of nested if's, but there are so many that it might
-    // actually have broken even already.
-    this.write5[0x104] = (value) => this.updateExram();
-    this.write5[0x105] = (value) => {
-      this.nametable_mode = value;
-      this.nametable_type[0] = value & 3;
-      this.load1kVromBank(value & 3, 0x2000);
-      value >>= 2;
-      this.nametable_type[1] = value & 3;
-      this.load1kVromBank(value & 3, 0x2400);
-      value >>= 2;
-      this.nametable_type[2] = value & 3;
-      this.load1kVromBank(value & 3, 0x2800);
-      value >>= 2;
-      this.nametable_type[3] = value & 3;
-      this.load1kVromBank(value & 3, 0x2c00);
-    };
-    // this.write5[0x106] = (value) => this.fill_chr = value;
-    // this.write5[0x107] = (value) => this.fill_pal = value & 3;
-    this.write5[0x113] = () => this.updatePrg();
-    this.write5[0x114] = () => this.updatePrg();
-    this.write5[0x115] = () => this.updatePrg();
-    this.write5[0x116] = () => this.updatePrg();
-    this.write5[0x117] = () => this.updatePrg();
-    // this.write5[0x113] = (value) => this.SetBank_SRAM(3, value & 3);
-    for (let address = 0x5114; address <= 0x5117; address++) {
-      this.write5[address & 0xfff] = (value) => this.SetBank_CPU(address, value);
-    }
-    for (let address = 0x5120; address <= 0x5127; address++) {
-      this.write5[address & 0xfff] = (value) => {
-        this.chr_mode = 0;
-        this.chr_page[0][address & 7] = value;
-        this.SetBank_PPU();
-      };
-    }
-    for (let address = 0x5128; address <= 0x512b; address++) {
-      this.write5[address & 0xfff] = (value) => {
-        this.chr_mode = 1;
-        this.chr_page[1][(address & 3) + 0] = value;
-        this.chr_page[1][(address & 3) + 4] = value;
-        this.SetBank_PPU();
-      };
-    }
-    this.write5[0x200] = (value) => this.split_control = value;
-    this.write5[0x201] = (value) => this.split_scroll = value;
-    this.write5[0x202] = (value) => this.split_page = value & 0x3f;
-    this.write5[0x203] = (value) => {
-      this.irq_line = value;
-      this.nes.cpu.ClearIRQ();
-    };
-    this.write5[0x204] = (value) => {
-      this.irq_enable = value;
-      this.nes.cpu.ClearIRQ();
-    };
-    this.write5[0x205] = (value) => this.mult_a = value;
-    this.write5[0x206] = (value) => this.mult_b = value;
-    for (let address = 0x5000; address <= 0x5015; address++) {
-      this.write5[address & 0xfff] =
-          (value) => this.nes.papu.exWrite(address, value);
-    }
-    for (let address = 0x5c00; address <= 0x5fff; address++) {
-      this.write5[address & 0xfff] = (value) => {
-        if (this.graphic_mode === 2) {
-          // ExRAM
-          // vram write
-        } else if (this.graphic_mode !== 3) {
-          // Split,ExGraphic
-          if (this.irq_status & 0x40) {
-            // vram write
-          } else {
-            // vram write
-          }
-        }
-      };
-    }
+  restoreExtSavestate(ext) {
+    const mmc5 = ExtSavestate.parse(ext);
+    this.reg5 = mmc5.reg5;
+    this.enableSram = mmc5.enableSram;
   }
 }
+
+const ExtSavestate = Proto.message('Mmc5', {
+  reg5: Proto.bytes(1).array(Uint8Array),
+  enableSram: Proto.uint32(2),
+});

@@ -1,5 +1,14 @@
 import {Proto} from './proto.js';
 
+export const Bank = Proto.message('Bank', {
+  // Name of the underlying buffer.
+  buffer: Proto.bytes(1).required(),
+  // Byte offset of the start of the bank.
+  offset: Proto.uint32(2).required(),
+  // Element length of the bank.
+  length: Proto.uint32(3).required(),
+});
+
 export const Savestate = Proto.message('Savestate', {
   // State of the CPU object.
   cpu:     Proto.bytes(1).required().message(() => Savestate.Cpu),
@@ -164,10 +173,12 @@ export const Savestate = Proto.message('Savestate', {
     // Cartridge RAM contents and ROM bank status
     prgRam: Proto.bytes(4).array(Uint8Array),
     chrRam: Proto.bytes(5).array(Uint8Array),
-    prgRom: Proto.bytes(6).array(Uint8Array),
-    chrRom: Proto.bytes(7).array(Uint8Array),
+    prgBanks: Proto.bytes(6).message(Bank).repeated(),
+    chrBanks: Proto.bytes(7).message(Bank).repeated(),
+    chrBanksData: Proto.bytes(8).message(Bank).repeated(),
+    chrBanksTall: Proto.bytes(9).message(Bank).repeated(),
     // Extended status for special mappers (could be an "any" bytes?)
-    ext: Proto.bytes(8),
+    ext: Proto.bytes(10),
   }),
 
   Partial: Proto.message('Savestate.Partial', {

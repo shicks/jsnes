@@ -56,7 +56,6 @@ export class NROM {
     this.initializeCpuRam();
     this.initializePpuRegisters();
     this.initializeApuRegisters();
-    this.initializePrgRam();
     this.initializePrgRomMapping();
     this.initializePrgRegisterMapping();
 
@@ -212,7 +211,6 @@ export class NROM {
   }
 
   initializePrgRomBanks() {
-    this.allPrgPages = [];
     const rom = this.nes.rom.rom;
     for (let i = 0; i < rom.length; i += 8192) {
       this.allPrgPages.push(
@@ -223,7 +221,6 @@ export class NROM {
   initializeChrRomBanks() {
     const ppu = this.nes.ppu;
     const vrom = this.nes.rom.vrom;
-    this.allChrPages = [];
     if (vrom.length) {
       ppu.importChrRom(vrom);
     } else {
@@ -315,13 +312,15 @@ export class NROM {
     this.initializePrgRam();
     this.initializePrgRomBanks();
     this.initializeChrRomBanks();
-
     this.loadBatteryRam();
+    this.initializeMapperState();
 
     // Reset IRQ:
     //nes.getCpu().doResetInterrupt();
     this.nes.cpu.requestIrq(this.nes.cpu.IRQ_RESET);
   }
+
+  initializeMapperState() {}
 
   loadBatteryRam() {
     if (this.nes.rom.batteryRam) {
@@ -420,7 +419,7 @@ export class NROM {
       return banks.map(a => {
         const b = buffers.get(a.buffer);
         if (!b) throw new Error(`Missing buffer`);
-        return [b, a.byteOffset, a.length];
+        return {buffer: b, offset: a.byteOffset, length: a.length};
       });
     }
     return Savestate.Mmap.of({
@@ -443,7 +442,7 @@ export class NROM {
     const buffers = this.bankSources();
     function deserializeBanks(banks) {
       if (banks == null) return null;
-      return banks.map(([buffer, offset, length]) => {
+      return banks.map(({buffer, offset, length}) => {
         // TODO - could be better
         const ctor = buffer === 'chr' ? Uint16Array : Uint8Array;
         const b = buffers.get(buffer);
