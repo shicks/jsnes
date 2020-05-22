@@ -9,6 +9,7 @@ const BANK_SELECT_ADDRESS_MASK = 0x07;
 export class MMC3 extends NROM {
   constructor(nes) {
     super(nes);
+    this.irqPixel = 240;
 
     // State
     this.bankSelect = 0;                   // Register $8000
@@ -110,6 +111,11 @@ export class MMC3 extends NROM {
   }
 
   clockIrqCounter() {
+    const ppu = this.nes.ppu;
+    if (!ppu.f_bgVisibility || !ppu.f_fgVisibility || ppu.scanline == 261) {
+      // no irq in these cases
+      return;
+    }
     // console.log(`clockIrqCounter: enabled: ${this.irqEnable}, counter: ${this.irqCounter}`);
     if (this.irqEnable === 1) {
       this.irqCounter--;

@@ -80,6 +80,7 @@ export function PPU(nes) {
   this.nametable2 = null;
   this.nametable3 = null;
   this.nametables = null; // array of 4 refs
+  this.extendedAttributes = null;
   // Sprites and palettes
   this.spriteRam = null;
   this.paletteRam = null;
@@ -154,8 +155,8 @@ PPU.prototype = {
     //this.patternTableFull.subarray(0, 0x400));
     this.nametable0 = new Uint8Array(0x400).fill(0xff);
     this.nametable1 = new Uint8Array(0x400).fill(0xff);
-    this.nametable2 = new Uint8Array(0x400).fill(0xff);
-    this.nametable3 = new Uint8Array(0x400).fill(0xff);
+    this.nametable2 = null; // new Uint8Array(0x400).fill(0xff);
+    this.nametable3 = null; // new Uint8Array(0x400).fill(0xff);
     this.nametables = [this.nametable0, this.nametable0, this.nametable0, this.nametable0];
     this.spriteRam = new Uint8Array(0x100).fill(0xff);
     this.paletteRam = new Uint8Array(0x20).fill(0xff);
@@ -255,36 +256,11 @@ PPU.prototype = {
     this.currentMirroring = mirroring;
     this.triggerRendering();
 
-    if (mirroring === this.nes.rom.HORIZONTAL_MIRRORING) {
-      // Horizontal mirroring.
-      this.nametables = [
-        this.nametable0, this.nametable0,
-        this.nametable1, this.nametable1,
-      ];
-    } else if (mirroring === this.nes.rom.VERTICAL_MIRRORING) {
-      // Vertical mirroring.
-      this.nametables = [
-        this.nametable0, this.nametable1,
-        this.nametable0, this.nametable1,
-      ];
-    } else if (mirroring === this.nes.rom.SINGLESCREEN_MIRRORING) {
-      // Single Screen mirroring
-      this.nametables = [
-        this.nametable0, this.nametable0,
-        this.nametable0, this.nametable0,
-      ];
-    } else if (mirroring === this.nes.rom.SINGLESCREEN_MIRRORING2) {
-      // Single Screen mirroring with second nametable
-      this.nametables = [
-        this.nametable1, this.nametable1,
-        this.nametable1, this.nametable1,
-      ];
-    } else {
-      // Assume Four-screen mirroring.
-      this.nametables = [
-        this.nametable0, this.nametable1,
-        this.nametable2, this.nametable3,
-      ];
+    const tables = [this.nametable0, this.nametable1,
+                    this.nametable2, this.nametable3];
+    this.nametables = [];
+    for (let i = 0; i < 4; i++) {
+      this.nametables[i] = tables[(mirroring >>> (i << 1)) & 3];
     }
   },
 
@@ -776,6 +752,10 @@ PPU.prototype = {
     }
   },
 
+  isRendering() {
+    return this.scanline >= 21 && this.scanline <= 260;
+  },
+
   triggerRendering: function() {
     if (this.scanline >= 21 && this.scanline <= 260) {
       // Render sprites, and combine:
@@ -847,12 +827,21 @@ PPU.prototype = {
       for (let tileX = 0; tileX < 32; tileX++) {
         if (scan >= 0) {
           // Check the current value of the nametable.
-          const tile = this.nt[this.cntVT << 5 | this.cntHT];
-          const addr = baseTile | tile << 4 | this.cntFV;
+          let att, tile;
+          const ntOffset = this.cntVT << 5 | this.cntHT;
+          if (this.extendedAttributes) {
+            const ex = this.extendedAttributes[ntOffset];
+            tile = ((ex & 0x3f) << 8 | this.nt[ntOffset]) << 4;
+            att = ex >> 6;
+          } else {
+            const attrByte =
+                this.nt[0x3c0 | (this.cntVT & 0x1c) << 1 | this.cntHT >> 2];
+            const attrShift = (this.cntVT & 2) << 1 | (this.cntHT & 2);
+            tile = baseTile | this.nt[ntOffset] << 4;
+            att = (attrByte >> attrShift & 3) << 2;
+          }
+          const addr = tile | this.cntFV;
           let line = this.patternTableBanks[addr >>> 10][addr & 0x3ff];
-          const attrByte = this.nt[0x3c0 | (this.cntVT & 0x1c) << 1 | this.cntHT >> 2];
-          const attrShift = (this.cntVT & 2) << 1 | (this.cntHT & 2);
-          const att = (attrByte >> attrShift & 3) << 2;
 
           // Render tile scanline:
           let minx = 0;
@@ -1083,7 +1072,7 @@ PPU.prototype = {
       if (!this.nes.mmap.chrRam) return;
       // CHR RAM writes need to be mangled before updating.
       const bank = 
-            (this.ppuDataBanks || this.patternTableBanks)[address >>> 10];
+          (this.ppuDataBanks || this.patternTableBanks)[address >>> 10];
       const hi = address & 8 ?
           value : collateBits(bank[address & 0x3ff] >>> 1 & TILE_LO_MASK);
       const lo = address & 8 ?
@@ -1214,8 +1203,8 @@ PPU.prototype = {
     // Nametables are only written if they're non-empty.
     if (this.nametable0.find(x => x)) data.mem.nametable0 = this.nametable0;
     if (this.nametable1.find(x => x)) data.mem.nametable1 = this.nametable1;
-    if (this.nametable2.find(x => x)) data.mem.nametable2 = this.nametable2;
-    if (this.nametable3.find(x => x)) data.mem.nametable3 = this.nametable3;
+    //if (this.nametable2.find(x => x)) data.mem.nametable2 = this.nametable2;
+    //if (this.nametable3.find(x => x)) data.mem.nametable3 = this.nametable3;
 
     // NOTE: if we're in the middle of rendering a frame, then
     // there's quite a bit more state to record.

@@ -82,7 +82,7 @@ export class NES {
   }
 
   frame() {
-    let cycles = 0;
+    let cycles = 0; // PPU cycles = 3*CPU cycles
     if (this.breakpointCycles != null) {
       cycles = this.breakpointCycles;
       this.breakpointCycles = null;
@@ -130,6 +130,9 @@ export class NES {
         }
       }
 
+      if (this.mmap && this.mmap.clockHardwareTimer) {
+        this.mmap.clockHardwareTimer(Math.floor(cycles / 3));
+      }
       for (; cycles > 0; cycles--) {
         if (
           ppu.curX === ppu.spr0HitX &&
@@ -151,9 +154,19 @@ export class NES {
           }
         }
 
-        if (++ppu.curX === 341) {
+        const curX = ++ppu.curX;
+        const scanline = ppu.scanline;
+        if (curX === 341) {
           ppu.endScanline();
           this.debug.logScanline(ppu.scanline, ppu.frame);
+        }
+        // TODO - do we know if MMC5 IRQ has the same visibility requirements?
+        if (curX === this.mmap.irqPixel &&
+            scanline >= 20 && scanline <= 261) {
+          // TODO - IRQ pixel for MMC3 depends on (a) whether we're
+          // using 8x8 sprites (unpredictable with 8x16), and (b) whether
+          // sprites are drawn out of table 0 or 1.
+          this.mmap.clockIrqCounter();
         }
       }
     }

@@ -33,6 +33,7 @@ const NULL_WRITE = () => {};
 export class NROM {
   constructor(nes) {
     this.nes = nes;
+    this.irqPixel = undefined;
     this.joy1StrobeState = 0;
     this.joy2StrobeState = 0;
     this.joypadLastWrite = 0;
