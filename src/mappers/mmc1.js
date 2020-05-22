@@ -16,12 +16,12 @@ const CTRL_CHR_4K = 0b10000;  // else 8K
 
 // Mapper 1
 export class MMC1 extends NROM {
-  constructor() {
-    super();
+  constructor(nes) {
+    super(nes);
     // 5-bit buffer
     this.shiftRegister = 0xf8;
     // $8000
-    this.control = CTRL_MIRROR_ONE_LOWER | CTRL_PRG_SWITCH_LO | CTRL_CHR_8K;
+    this.control = CTRL_MIRROR_ONE_LOWER | CTRL_PRG_16K_LO; // | CTRL_CHR_8K;
     // $A000
     this.chrLo = 0;
     // $C000 -- only matters in 4K mode
@@ -41,7 +41,7 @@ export class MMC1 extends NROM {
   reset() {
     super.reset();
     this.shiftRegister = 0xf8;
-    this.control = CTRL_MIRROR_ONE_LOWER | CTRL_PRG_SWITCH_LO | CTRL_CHR_8K;
+    this.control = CTRL_MIRROR_ONE_LOWER | CTRL_PRG_16K_LO; // | CTRL_CHR_8K;
     this.chrLo = 0;
     this.chrHi = 0;
     this.prgPage = 0;

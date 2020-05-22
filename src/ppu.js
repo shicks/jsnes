@@ -962,7 +962,7 @@ PPU.prototype = {
         const spriteY = attr & SPRITE_VERT_FLIP ? 7 - (scan - y) : scan - y;
         addr = this.f_spPatternTable | tile | spriteY;
       }
-      patternTable = this.tallSpritePatternTableBanks || this.patternTableBanks;
+      patternTable = this.patternTableBanks;
     } else {
       // 8x16 sprites
       if (y <= scan && y + 16 > scan && x >= -7 && x < 256) {
@@ -972,7 +972,7 @@ PPU.prototype = {
         if (spriteY & 8) tile |= 0x10;
         addr = tile | spriteY;
       }
-      patternTable = this.patternTableBanks;
+      patternTable = this.tallSpritePatternTableBanks || this.patternTableBanks;
     }
     if (addr < 0) return false; // not in range
     const horizontalFlip = attr & SPRITE_HORI_FLIP ? 8 : 0;

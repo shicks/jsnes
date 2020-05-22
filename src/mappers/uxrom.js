@@ -4,7 +4,7 @@ import {NROM} from './nrom.js';
 export class UxROM extends NROM {
   initializePrgRom() {
     this.swapPrg8k(0, 0, 2);
-    this.swapPrg8k(2, 0xff, 2);
+    this.swapPrg8k(2, 0xfe, 2);
   }
 
   write8000(value) {

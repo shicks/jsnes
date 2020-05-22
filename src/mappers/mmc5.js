@@ -292,7 +292,7 @@ export class MMC5 extends NROM {
     const tall = ppu.f_tallSprites;
     const lo = tall ? ppu.tallSpritePatternTableBanks : ppu.patternTableBanks;
     const hi = tall ? ppu.patternTableBanks : null;
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 8; i += size) {
       this.swapChr1k(i, this.reg5[0x120 | (size - 1) | i], size, lo);
       if (!hi) continue;
       this.swapChr1k(i, this.reg5[0x128 | ((size - 1) | i) & 3], size, hi);
