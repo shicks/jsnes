@@ -8,7 +8,7 @@ import {NROM} from './nrom.js';
  * @constructor
  */
 export class BNROM extends NROM {
-  write8(address, value) {
-    this.loadPrgPage(0x8000, value, 0x8000);
+  write8000(value, address) {
+    this.swapPrg8k(0, value << 2, 4);
   }
 }

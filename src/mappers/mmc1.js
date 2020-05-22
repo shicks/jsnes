@@ -52,34 +52,52 @@ export class MMC1 extends NROM {
     this.update();
   }
 
-  write8(address, value) {
+  initializePrgRegisterMapping() {
+    this.fillPrgMirror([[0x8000, this.write8000],
+                        [0xa000, this.writeA000],
+                        [0xc000, this.writeC000],
+                        [0xe000, this.writeE000]],
+                       0x2000, 1);
+  }
+
+  shift(value) {
     // TODO(sdh): consider storing the cycle of the last write and ignoring
     // if it was too recent (cf. Bill and Ted)
     if (value & 0x80) {
-      // High bit in written value resets
+      // High bit in written value resets and locks PRG mode to 3.
       this.shiftRegister = 0xf8;
       this.control = this.control | CTRL_PRG_16K_LO;
-      this.loadPrgPage(0x8000, this.prgPage >>> 1, 0x8000);
-      return;
+      this.update();
+      return false;
     }
     this.shiftRegister <<= 1;
     this.shiftRegister &= value & 1;
-    if (this.shiftRegister & 0x80) return;
+    if (this.shiftRegister & 0x80) return false;
+    return true;
+  }
 
+  write8000(value) {
+    if (!this.shift(value)) return;
+    this.control = this.shiftRegister;
+    this.update();
+  }
+
+  writeA000(value) {
     // This is the fifth write, so shiftRegister now contains the value
-    if (address < 0xc000) {
-      if (address < 0xa000) {
-        this.control = this.shiftRegister;
-      } else {
-        this.chrLo = this.shiftRegister;
-      }
-    } else {
-      if (address < 0xe000) {
-        this.chrHi = this.shiftRegister;
-      } else {
-        this.prgPage = this.shiftRegister;
-      }
-    }
+    if (!this.shift(value)) return;
+    this.chrLo = this.shiftRegister;
+    this.update();
+  }
+
+  writeC000(value) {
+    if (!this.shift(value)) return;
+    this.chrHi = this.shiftRegister;
+    this.update();
+  }
+
+  writeE000(value) {
+    if (!this.shift(value)) return;
+    this.prgPage = this.shiftRegister;
     this.update();
   }
 
@@ -88,20 +106,20 @@ export class MMC1 extends NROM {
     this.nes.ppu.setMirroring(this.mirrorTypes[ctrl & CTRL_MIRROR_MASK]);
     if (ctrl & CTRL_PRG_16K) {
       if ((ctrl & CTRL_PRG_MASK) == CTRL_PRG_16K_LO) {
-        this.loadPrgPage(0x8000, this.prgPage, 0x4000);
-        this.loadPrgPage(0xc000, 0xf, 0x4000);
+        this.swapPrg8k(0, this.prgPage << 1, 2);
+        this.swapPrg8k(2, 0xf, 2);
       } else {
-        this.loadPrgPage(0x8000, 0, 0x4000);
-        this.loadPrgPage(0xc000, this.prgPage, 0x4000);
+        this.swapPrg8k(0, 0, 2);
+        this.swapPrg8k(2, this.prgPage << 1, 2);
       }
     } else {
-      this.loadPrgPage(0x8000, this.prgPage >>> 1, 0x8000);
+      this.swapPrg8k(0, (this.prgPage & ~1) << 1, 4);
     }
     if (ctrl & CTRL_CHR_4K) {
-      this.loadChrPage(0x0000, this.chrLo, 0x1000);
-      this.loadChrPage(0x1000, this.chrHi, 0x1000);
+      this.swapChr1k(0, this.chrLo << 2, 4);
+      this.swapChr1k(4, this.chrHi << 2, 4);
     } else {
-      this.loadChrPage(0x0000, this.chrLo >>> 1, 0x2000);
+      this.swapChr1k(0, (this.chrLo & ~1) << 2, 8);
     }
   }
 

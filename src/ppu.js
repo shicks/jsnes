@@ -36,9 +36,22 @@ export function PPU(nes) {
   // normal direction; the high two bytes are horizontally flipped.
   this.patternTableFull = null;
 
-  // Currently loaded subset of pattern table, managed by a bank
-  // switcher.
-  this.patternTable = null;
+  // Currently loaded pattern banks, in 1k chunks.  These are
+  // subarrays of this.patternTableFull.
+  this.patternTableBanks = [];
+
+  // Pattern table banks used for 8x16 sprites.  This is generally
+  // just a replica of patternTableBanks, but can be set separately
+  // (e.g. by MMC5).
+  this.tallSpritePatternTableBanks = null;
+  // Pattern table banks used for PPU data lookup.  This is generally
+  // just a replica of patternTableBanks, but can be set separately
+  // (e.g. by MMC5).
+  this.ppuDataBanks = null;
+
+  // // Currently loaded subset of pattern table, managed by a bank
+  // // switcher.
+  // this.patternTable = null;
 
   // this.patternTable = null;
   // // 8-element map for bank switching.  Each element is a base offset
@@ -137,7 +150,8 @@ export function PPU(nes) {
 PPU.prototype = {
   reset: function() {
     // PPU Memory:
-    this.patternTable = new Uint16Array(0x2000);
+    this.patternTableBanks = new Array(8).fill(null);
+    //this.patternTableFull.subarray(0, 0x400));
     this.nametable0 = new Uint8Array(0x400).fill(0xff);
     this.nametable1 = new Uint8Array(0x400).fill(0xff);
     this.nametable2 = new Uint8Array(0x400).fill(0xff);
@@ -834,7 +848,8 @@ PPU.prototype = {
         if (scan >= 0) {
           // Check the current value of the nametable.
           const tile = this.nt[this.cntVT << 5 | this.cntHT];
-          let line = this.patternTable[baseTile | tile << 4 | this.cntFV];
+          const addr = baseTile | tile << 4 | this.cntFV;
+          let line = this.patternTableBanks[addr >>> 10][addr & 0x3ff];
           const attrByte = this.nt[0x3c0 | (this.cntVT & 0x1c) << 1 | this.cntHT >> 2];
           const attrShift = (this.cntVT & 2) << 1 | (this.cntHT & 2);
           const att = (attrByte >> attrShift & 3) << 2;
@@ -949,6 +964,7 @@ PPU.prototype = {
     const x = this.spriteRam[3];
 
     let addr = -1;
+    let patternTable;
 
     if (!this.f_tallSprites) {
       // 8x8 sprites.
@@ -957,6 +973,7 @@ PPU.prototype = {
         const spriteY = attr & SPRITE_VERT_FLIP ? 7 - (scan - y) : scan - y;
         addr = this.f_spPatternTable | tile | spriteY;
       }
+      patternTable = this.tallSpritePatternTableBanks || this.patternTableBanks;
     } else {
       // 8x16 sprites
       if (y <= scan && y + 16 > scan && x >= -7 && x < 256) {
@@ -966,10 +983,11 @@ PPU.prototype = {
         if (spriteY & 8) tile |= 0x10;
         addr = tile | spriteY;
       }
+      patternTable = this.patternTableBanks;
     }
     if (addr < 0) return false; // not in range
     const horizontalFlip = attr & SPRITE_HORI_FLIP ? 8 : 0;
-    let line = this.patternTable[addr | horizontalFlip];
+    let line = patternTable[addr >>> 10][addr & 0x3ff | horizontalFlip];
     line = (line & TILE_LO_MASK) | (line & TILE_HI_MASK) >> 1;
 
     // now find the background value
@@ -990,7 +1008,8 @@ PPU.prototype = {
     let bgTile =
         this.f_spPatternTable |
         this.nametables[cntH | cntV][((scanlineY & 0xf8) << 2) | tileX] << 4;
-    let bgLine = this.patternTable[bgTile | scanlineY & 7];
+    let bgLine =
+        this.patternTableBanks[bgTile >>> 10][bgTile & 0x3ff | scanlineY & 7];
     bgLine = (bgLine & TILE_LO_MASK) | (bgLine & TILE_HI_MASK) >> 1;
     bgLine = (bgLine & 0xffff) << offsetX;
     let hit = bgLine & line;
@@ -1004,7 +1023,8 @@ PPU.prototype = {
       bgTile =
           this.f_spPatternTable |
           this.nametables[cntH | cntV][((scanlineY & 0xf8) << 2) | tileX] << 4;
-      bgLine = this.patternTable[bgTile | scanlineY & 7];
+      bgLine =
+          this.patternTableBanks[bgTile >>> 10][bgTile & 0x3ff | scanlineY & 7];
       bgLine = (bgLine & TILE_LO_MASK) | (bgLine & TILE_HI_MASK) >> 1;
       bgLine = (bgLine & 0xffff) >>> (16 - offsetX);
       hit = bgLine & line;
@@ -1029,10 +1049,13 @@ PPU.prototype = {
   load: function(address) {
     if (address < 0x2000) {
       // look up the bank
+      const ppuData = this.ppuDataBanks || this.patternTableBanks;
       if (address & 8) {
-        return collateBits(this.patternTable[address & ~8] >> 1 & TILE_LO_MASK);
+        return collateBits(
+            ppuData[address >>> 10][address & 0x3f7] >> 1 & TILE_LO_MASK);
       } else {
-        return collateBits(this.patternTable[address & ~8] & TILE_LO_MASK);
+        return collateBits(
+            ppuData[address >>> 10][address & 0x3f7] & TILE_LO_MASK);
       }        
     } else {
       if (address < 0x3f00) {
@@ -1059,16 +1082,16 @@ PPU.prototype = {
     if (address < 0x2000) {
       if (!this.nes.mmap.chrRam) return;
       // CHR RAM writes need to be mangled before updating.
+      const bank = 
+            (this.ppuDataBanks || this.patternTableBanks)[address >>> 10];
       const hi = address & 8 ?
-          value :
-          collateBits(this.patternTable[address] >>> 1 & TILE_LO_MASK);
+          value : collateBits(bank[address & 0x3ff] >>> 1 & TILE_LO_MASK);
       const lo = address & 8 ?
-          collateBits(this.patternTable[address & ~8] & TILE_LO_MASK) :
-          value;
+          collateBits(bank[address & 0x3f7] & TILE_LO_MASK) : value;
       const lor = reverseBits(lo);
       const hir = reverseBits(hi);
-      this.patternTable[address & ~8] = intercalateBits(lo, hi);
-      this.patternTable[address | 8] = intercalateBits(lor, hir);
+      bank[address & 0x3f7] = intercalateBits(lo, hi);
+      bank[address & 0x3ff | 8] = intercalateBits(lor, hir);
     } else {
       if (address < 0x3f00) {
         // nametable write
@@ -1131,12 +1154,15 @@ PPU.prototype = {
     }
 
     let fbIndex = (dy << 8) + dx;
+    const baseAddr = tileAddress | flipHorizontal;
+    const bank = (this.f_tallSprites && this.tallSpritePatternTableBanks ||
+                  this.patternTableBanks)[baseAddr >>> 10];
     for (let y = 0; y < 8; y++) {
       if (y < srcy1 || y >= srcy2) {
         fbIndex += 256;
         continue;
       }
-      let line = this.patternTable[tileAddress | flipHorizontal | y ^ flipVertical];
+      let line = bank[baseAddr & 0x3ff | y ^ flipVertical];
       for (let x = 0; x < 8; x++) {
         if (x >= srcx1 && x < srcx2) {
           const color = line & 3;

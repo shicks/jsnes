@@ -9,8 +9,8 @@ import {NROM} from './nrom.js';
 export class AxROM extends NROM {
   loadBatteryRam() {}
 
-  write8(address, value) {
-    this.loadPrgPage(0x8000, value & 7, 0x8000);
+  write8000(value, address) {
+    this.swapPrg8k(0, (value & 7) << 2, 4);
     this.nes.ppu.setMirroring(
         value & 0x10 ?
             this.nes.rom.SINGLESCREEN_MIRRORING2 :

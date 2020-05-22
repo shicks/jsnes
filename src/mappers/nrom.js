@@ -41,11 +41,24 @@ export class NROM {
     this.zapperY = null;
 
     // Included verbatim in snapshots.
+    this.prgRom = null;
     this.prgRam = null;
     this.chrRam = null;
 
-    this.prgRomSwitcher = null;
-    this.chrRomSwitcher = null;
+    this.prgBanks = []; // array of actually-paged-in pages
+
+    this.allChrPages = []; // array of minimum-sized subarrays
+    this.allPrgPages = [];
+
+    const nullFunc = () => 0;
+    this.prgLoad = new Array(0x10000).fill(nullFunc);
+    this.prgWrite = new Array(0x10000).fill(nullFunc);
+    this.initializeCpuRam();
+    this.initializePpuRegisters();
+    this.initializeApuRegisters();
+    this.initializePrgRam();
+    this.initializePrgRomMapping();
+    this.initializePrgRegisterMapping();
 
     // Array of the four currently selected 8k banks for PRG ROM.  Anything else
     // (swappable PRG RAM, smaller ROM banks, etc) requires special handler for
@@ -58,18 +71,125 @@ export class NROM {
     // has CHR RAM swapping, it will need special support anyway.
   }
 
+  swapChr1k(bank, page, count = 1, table = this.nes.ppu.patternTableBanks) {
+    for (let i = 0; i < count; i++) {
+      table[bank + i] =
+          this.allChrPages[(page + i) & mask(this.allChrPages.length)];
+    }
+  }
+
+  swapPrg8k(bank, page, count = 1) {
+    for (let i = 0; i < count; i++) {
+      this.prgBanks[bank + i] =
+          this.allPrgPages[(page + i) & mask(this.allPrgPages.length)];
+    }
+  }
+
+  initializeCpuRam() {
+    const ram = this.nes.cpu;
+    const load = (x) => ram[x & 0x7ff];
+    const write = (v, x) => ram[x & 0x7ff] = v;
+    for (let i = 0; i < 0x2000; i++) {
+      this.prgLoad[i] = load;
+      this.prgWrite[i] = write;
+    }
+  }
+
+  initializePpuRegisters() {
+    const ppu = this.nes.ppu;
+    // 2000 PPUCTRL (PPU Control Register 1)
+    const load2000 = ppu.readPpuCtrl.bind(ppu);
+    const write2000 = ppu.writePpuCtrl.bind(ppu);
+    // 2001 PPUMASK (PPU Control Register 2)
+    const load2001 = ppu.readPpuMask.bind(ppu);
+    const write2001 = ppu.writePpuMask.bind(ppu);
+    // 2002 PPUSTATUS (PPU Status Register)
+    const load2002 = ppu.readStatusRegister.bind(ppu);
+    // 2003 OAMADDR (Sprite RAM address)
+    const write2003 = ppu.writeSRAMAddress.bind(ppu);
+    // 2004 OAMDATA (Sprite memory read/write)
+    const load2004 = ppu.sramLoad.bind(ppu);
+    const write2004 = ppu.sramWrite.bind(ppu);
+    // 2005 PPUSCROLL (Screen scroll offsets)
+    const write2005 = ppu.scrollWrite.bind(ppu);
+    // 2006 PPUADDR (VRAM address)
+    const write2006 = ppu.writeVRAMAddress.bind(ppu);
+    // 2007 PPUDATA (VRAM read/write)
+    const load2007 = ppu.vramLoad.bind(ppu);
+    const write2007 = ppu.vramWrite.bind(ppu);
+    for (let i = 0x2000; i < 0x4000; i += 8) {
+      this.prgLoad[i | 0] = load2000;
+      this.prgWrite[i | 0] = write2000;
+      this.prgLoad[i | 1] = load2001;
+      this.prgWrite[i | 1] = write2001;
+      this.prgLoad[i | 2] = load2002;
+      this.prgWrite[i | 3] = write2003;
+      this.prgLoad[i | 4] = load2004;
+      this.prgWrite[i | 4] = write2004;
+      this.prgWrite[i | 5] = write2005;
+      this.prgWrite[i | 6] = write2006;
+      this.prgLoad[i | 7] = load2007;
+      this.prgWrite[i | 7] = write2007;
+    }
+    // 4014 OAMDMA (Sprite memory DMA access)
+    this.prgWrite[0x4014] = ppu.sramDMA.bind(ppu);
+  }
+
+  initializeApuRegisters() {
+    // 4016 Joystick write
+    this.prgWrite[0x4016] = this.writeJoystickStrobe.bind(this);
+    // 4016 Joystick 1 + Strobe -
+    this.prgLoad[0x4016] = this.joy1Read.bind(this);
+    // 4017 Joystick 2 + Strobe - with zapper
+    this.prgLoad[0x4017] = this.joy2ReadWithZapper.bind(this);
+
+    const papu = this.nes.papu;
+    // APU registers
+    for (let a = 0x4000; a < 0x4016; a++) {
+      if (a === 0x4014) continue; 
+      this.prgWrite[a] = papu.writeReg.bind(papu, a);
+    }
+    // 4015 APU Status
+    this.prgLoad[0x4015] = papu.readStatus.bind(papu);
+  }
+
+  initializePrgRomMapping() {
+    const load = (addr) => this.prgBanks[(addr & 0x7fff) >>> 13][addr & 0x1fff];
+    for (let a = 0x8000; a < 0x10000; a++) {
+      this.prgLoad[a] = load;
+    }
+  }
+
+  initializePrgRegisterMapping() {
+    const write = this.write8000.bind(this);
+    for (let a = 0x8000; a < 0x10000; a++) {
+      this.prgWrite[a] = write;
+    }
+  }
+
+  fillPrgMirror(mapping, size = 0x8000, delta = 1, data = this.prgWrite) {
+    for (let i = 0; i < mapping.length; i++) {
+      mapping[i][1] = mapping[i][1].bind(this, ...mapping[i].slice(2));
+    }
+    for (let a = 0; a < size; a += delta) {
+      for (const [r, f] of mapping) {
+        data[r + a] = f;
+      }
+    }
+  }
+
+  initializePrgRegisterMapping() {
+    this.fillPrgMirror([[0x8000, this.write8000]]);
+  }
+
+  write8000(val, addr) {}
+
   /**
    * Handles register loads.  Loads from CPU RAM or PRG ROM will not
    * work correctly and should instead be handled by CPU.prototype.load.
    */
   load(address) {
-    if (address < 0x6000) {
-      if (address < 0x4000) {
-        return this.load2(address);
-      }
-      return this.load4(address);
-    }
-    return this.prgRam[address & 0x1fff];
+    return this.prgLoad[address](address);
   }
 
   /**
@@ -77,143 +197,43 @@ export class NROM {
    * should instead be handled by CPU.prototype.load.
    */
   write(address, value) {
-    if (address < 0x6000) {
-      if (address < 0x4000) {
-        this.write2(address, value);
-      } else {
-        this.write4(address, value);
-      }
-    } else if (address < 0x8000) {
-      this.prgRam[address & 0x1fff] = value;
-    } else {
-      this.write8(address, value);
-    } 
+    this.prgWrite[address](value, address);
   }
-
-  /** Handles all loads from $2000 .. $3fff. */
-  load2(address) {
-    address &= 0x7;
-    if (address < 4) {
-      if (address < 2) {
-        return address ?
-            // 2001 PPUMASK (PPU Control Register 2)
-            this.nes.ppu.readPpuMask() :
-            // 2000 PPUCTRL (PPU Control Register 1)
-            this.nes.ppu.readPpuCtrl();
-      } else if (address == 2) {
-        // 2002 PPUSTATUS (PPU Status Register)
-        return this.nes.ppu.readStatusRegister();
-      }
-    } else {
-      if (address == 4) {
-        // 2004 OAMDATA (Sprite memory read/write)
-        return this.nes.ppu.sramLoad();
-      } else if (address == 7) {
-        // 2007 PPUDATA (VRAM read/write)
-        return this.nes.ppu.vramLoad();
-      }
-    }
-    return 0;
-  }
-
-  /** Handles all writes to $2000 .. $3fff. */
-  write2(address, value) {
-    address &= 0x7;
-    if (address < 4) {
-      if (address < 2) {
-        if (address) {
-          // 2001 PPUMASK (PPU Control Register 2)
-          this.nes.ppu.writePpuMask(value);
-        } else {
-          // 2000 PPUCTRL (PPU Control Register 1)
-          this.nes.ppu.writePpuCtrl(value);
-        }
-      } else if (address == 3) {
-        // 2003 OAMADDR (Sprite RAM address)
-        this.nes.ppu.writeSRAMAddress(value);
-      }
-    } else {
-      if (address < 6) {
-        if (address == 4) {
-          // 2004 OAMDATA (Sprite memory read/write)
-          this.nes.ppu.sramWrite(value);
-        } else {
-          // 2005 PPUSCROLL (Screen scroll offsets)
-          this.nes.ppu.scrollWrite(value);
-        }
-      } else {
-        if (address == 6) {
-          // 2006 PPUADDR (VRAM address)
-          this.nes.ppu.writeVRAMAddress(value);
-        } else {
-          // 2007 PPUDATA (VRAM read/write)
-          this.nes.ppu.vramWrite(value);
-        }
-      }
-    }
-  }
-
-  /** Handles all loads from $4000 .. $5fff. */
-  load4(address) {
-    if (address == 0x4015) {
-      // 4015 APU Status
-      return this.nes.papu.readStatus();
-    } else if (address == 0x4016) {
-      // 4016 Joystick 1 + Strobe -
-      return this.joy1Read();
-    } else if (address == 0x4017) {
-      // 4017 Joystick 2 + Strobe - with zapper
-      return this.joy2ReadWithZapper();
-    }
-    return 0;
-  }
-
-  /** Handles all writes to $4000 .. $5fff. */
-  write4(address, value) {
-    if (address < 0x4016) {
-      if (address == 0x4014) {
-        // 4014 OAMDMA (Sprite memory DMA access)
-        this.nes.ppu.sramDMA(value);
-      } else {
-        this.nes.papu.writeReg(address, value);
-      }
-    } else if (address == 0x4016) {
-      this.writeJoystickStrobe(value);
-    } else if (address == 0x4017) {
-      this.nes.papu.writeReg(address, value);
-    }
-  }
-
-  /** Handles all writes to $8000 .. $ffff. */
-  write8(address, value) {}
 
   initializePrgRam() {
     // May be overwritten to handle paging, etc.
     this.prgRam = new Uint8Array(0x2000);
-  }
-
-  initializePrgRomSwitcher() {
-    // May be overwritten to handle paging, etc.
-    this.prgRomSwitcher = new utils.RomBankSwitcher(this.nes.rom.rom, 0x8000);
-  }
-
-  initializePrgRom() {
-    this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
-  }
-
-  initializeChrRomSwitcher() {
-    if (this.nes.rom.vrom.length) {
-      this.nes.ppu.importChrRom(this.nes.rom.vrom);
-      this.chrRomSwitcher =
-          new utils.RomBankSwitcher(this.nes.ppu.patternTableFull, 0x2000, 512);
-    } else {
-      this.chrRam = new Uint16Array(0x2000);
-      this.nes.ppu.patternTableFull = this.nes.ppu.patternTable = this.chrRam;
+    const write = (val, addr) => this.prgRam[addr & 0x1fff] = val;
+    const load = (addr) => this.prgRam[addr & 0x1fff];
+    for (let a = 0x6000; a < 0x8000; a++) {
+      this.prgWrite[a] = write;
+      this.prgLoad[a] = load;
     }
   }
 
-  initializePatternTables() {
-    this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
+  initializePrgRomBanks() {
+    this.allPrgPages = [];
+    const rom = this.nes.rom.rom;
+    for (let i = 0; i < rom.length; i += 8192) {
+      this.allPrgPages.push(
+          this.prgBanks[i >> 13] = rom.subarray(i, i + 8192));
+    }
+  }
+
+  initializeChrRomBanks() {
+    const ppu = this.nes.ppu;
+    const vrom = this.nes.rom.vrom;
+    this.allChrPages = [];
+    if (vrom.length) {
+      ppu.importChrRom(vrom);
+    } else {
+      this.chrRam = new Uint16Array(0x2000);
+      ppu.patternTableFull = this.chrRam;
+    }
+    for (let i = 0; i < ppu.patternTableFull.length; i += 1024) {
+      this.allChrPages.push(ppu.patternTableFull.subarray(i, i + 1024));
+    }
+    this.swapChr1k(0, 0, 8);
   }
 
   reset() {
@@ -292,13 +312,9 @@ export class NROM {
     }
 
     // TODO - if some of these are never overridden then simplify/hardcode
-    this.initializePrgRomSwitcher();
-    this.initializeChrRomSwitcher();
     this.initializePrgRam();
-    this.initializePrgRom();
-    if (this.chrRomSwitcher) {
-      this.initializePatternTables();
-    }
+    this.initializePrgRomBanks();
+    this.initializeChrRomBanks();
 
     this.loadBatteryRam();
 
@@ -320,37 +336,37 @@ export class NROM {
     }
   }
 
-  // Loads a page of PRG ROM
-  loadPrgPage(address, bank, size) {
-    this.prgRomSwitcher.swap(address & 0x7fff, bank, size);
-    this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
-  }
+  // // Loads a page of PRG ROM
+  // loadPrgPage(address, bank, size) {
+  //   this.prgRomSwitcher.swap(address & 0x7fff, bank, size);
+  //   this.prgRom = this.prgRomSwitcher.buffer();
+  // }
 
-  // Effectively makes repeated calls to loadPrgPage
-  loadPrgPages(...pages) {
-    for (const [address, bank, size] of pages) {
-      this.prgRomSwitcher.swap(address & 0x7fff, bank, size);
-    }
-    this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
-  }
+  // // Effectively makes repeated calls to loadPrgPage
+  // loadPrgPages(...pages) {
+  //   for (const [address, bank, size] of pages) {
+  //     this.prgRomSwitcher.swap(address & 0x7fff, bank, size);
+  //   }
+  //   this.prgRom = this.prgRomSwitcher.buffer();
+  // }
 
-  // Loads a page of CHR ROM
-  loadChrPage(address, bank, size) {
-    if (this.nes.ppu.usingChrRam) return; // do nothing
-    this.nes.ppu.triggerRendering();
-    this.chrRomSwitcher.swap(address, bank, size);
-    this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
-  }
+  // // Loads a page of CHR ROM
+  // loadChrPage(address, bank, size) {
+  //   if (this.nes.ppu.usingChrRam) return; // do nothing
+  //   this.nes.ppu.triggerRendering();
+  //   this.chrRomSwitcher.swap(address, bank, size);
+  //   this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
+  // }
 
-  // Effectively makes multiple calls to loadChrPage
-  loadChrPages(...pages) {
-    if (this.nes.ppu.usingChrRam) return; // do nothing
-    this.nes.ppu.triggerRendering();
-    for (const [address, bank, size] of pages) {
-      this.chrRomSwitcher.swap(address, bank, size);
-    }
-    this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
-  }
+  // // Effectively makes multiple calls to loadChrPage
+  // loadChrPages(...pages) {
+  //   if (this.nes.ppu.usingChrRam) return; // do nothing
+  //   this.nes.ppu.triggerRendering();
+  //   for (const [address, bank, size] of pages) {
+  //     this.chrRomSwitcher.swap(address, bank, size);
+  //   }
+  //   this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
+  // }
 
   clockIrqCounter() {
     // Does nothing. This is used by the MMC3 mapper.
@@ -368,8 +384,7 @@ export class NROM {
   // actually used by the switcher.  This is used for building CPU traces.
   prgRomBank(addr) {
     if (addr < 0x8000) return null;
-    const fullAddr = this.prgRomSwitcher.map(addr & 0x7fff);
-    return fullAddr >>> 13;
+    return this.prgBanks[(addr & 0x7fff) >>> 13].byteOffset >>> 13;
   }
 
   // Return the address into the ROM for the given bank and memory address.  This
@@ -384,20 +399,40 @@ export class NROM {
   // Maps the PPU memory address to CHR ROM, or returns null if not in CHR ROM.
   mapChr(addr) {
     if (addr >= 0x2000) return null;
-    return this.chrRomSwitcher.map(addr);
+    const subarray = this.nes.ppu.patternTableBanks[addr >>> 10];
+    return (subarray.byteOffset >> 1) | (addr & 0x3ff);
+  }
+
+  bankSources(reverse = false) {
+    return new Map([
+      ['prgrom', this.nes.rom.rom.buffer],
+      ['prgram', this.prgRam.buffer]
+      ['chr', this.ppu.patternTableFull.buffer],
+    ].map(a => reverse ? [a[1], a[0]] : a));
   }
 
   writeExtSavestate() {}
 
   writeSavestate() {
+    const buffers = this.bankSources(true);
+    function serializeBanks(banks) {
+      if (banks == null) return null;
+      return banks.map(a => {
+        const b = buffers.get(a.buffer);
+        if (!b) throw new Error(`Missing buffer`);
+        return [b, a.byteOffset, a.length];
+      });
+    }
     return Savestate.Mmap.of({
       joy1StrobeState: this.joy1StrobeState,
       joy2StrobeState: this.joy2StrobeState,
       joypadLastWrite: this.joypadLastWrite,
       prgRam: this.prgRam,
       chrRam: this.chrRam,
-      prgRom: this.prgRomSwitcher && this.prgRomSwitcher.snapshot(),
-      chrRom: this.chrRomSwitcher && this.chrRomSwitcher.snapshot(),
+      prgBanks: serializeBanks(this.prgBanks),
+      chrBanks: serializeBanks(this.nes.ppu.patternTableBanks),
+      chrBanksData: serializeBanks(this.nes.ppu.ppuDataBanks),
+      chrBanksTall: serializeBanks(this.nes.ppu.tallSpritePatternTableBanks),
       ext: this.writeExtSavestate(),
     });
   }
@@ -405,18 +440,32 @@ export class NROM {
   restoreExtSavestate(ext) {}
 
   restoreSavestate(mmap) {
+    const buffers = this.bankSources();
+    function deserializeBanks(banks) {
+      if (banks == null) return null;
+      return banks.map(([buffer, offset, length]) => {
+        // TODO - could be better
+        const ctor = buffer === 'chr' ? Uint16Array : Uint8Array;
+        const b = buffers.get(buffer);
+        if (!b) throw new Error(`Missing buffer`);
+        return new ctor(b, offset, length);
+      });
+    }
     this.joy1StrobeState = mmap.joy1StrobeState;
     this.joy2StrobeState = mmap.joy2StrobeState;
     this.joypadLastWrite = mmap.joypadLastWrite;
     if (mmap.prgRam) this.prgRam.set(mmap.prgRam);
     if (mmap.chrRam) this.chrRam.set(mmap.chrRam);
-    if (mmap.prgRom) {
-      this.prgRomSwitcher.restore(mmap.prgRom);
-      this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
+    if (mmap.prgBanks) this.prgBanks = deserializeBanks(mmap.prgBanks);
+    if (mmap.chrBanks) {
+      this.nes.ppu.patternTableBanks = deserializeBanks(mmap.chrBanks);
     }
-    if (mmap.chrRom) {
-      this.chrRomSwitcher.restore(mmap.chrRom);
-      this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
+    if (mmap.chrBanksTall) {
+      this.nes.ppu.tallSpritePatternTableBanks =
+          deserializeBanks(mmap.chrBanksTall);
+    }
+    if (mmap.chrBanksData) {
+      this.nes.ppu.ppuDataBanks = deserializeBanks(mmap.chrBanksData);
     }
     if (mmap.ext) {
       this.restoreExtSavestate(mmap.ext);
@@ -424,8 +473,12 @@ export class NROM {
   }
 
   clearCache() {
-    if (this.prgRomSwitcher) this.prgRomSwitcher.clearCache();
-    if (this.chrRomSwitcher) this.chrRomSwitcher.clearCache();
     this.restoreSavestate(this.writeSavestate());
   }
+}
+
+function mask(powerOfTwo) {
+  // note: degrade gracefully if not a power of two.
+  const z = Math.clz32(powerOfTwo - 1);
+  return (1 << (32 - z)) - 1;
 }

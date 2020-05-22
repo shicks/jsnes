@@ -9,7 +9,6 @@ export function CPU(nes) {
 
   // Keep Chrome happy
   this.ram = null;
-  this.prgRom = null;
   this.REG_ACC = null;
   this.REG_X = null;
   this.REG_Y = null;
@@ -1078,11 +1077,7 @@ CPU.prototype = {
 
   load: function(addr, opt_log) {
     let result;
-    if (addr < 0x8000) {
-      result = addr < 0x2000 ? this.ram[addr & 0x7ff] : this.nes.mmap.load(addr);
-    } else {
-      result = this.prgRom[addr & 0x7fff];
-    }
+    result = addr < 0x2000 ? this.ram[addr & 0x7ff] : this.nes.mmap.load(addr);
     if (opt_log && this.nes.debug) this.nes.debug.logMem(Debug.MEM_RD, addr, result);
     return result;
   },
@@ -1095,7 +1090,7 @@ CPU.prototype = {
 
   write: function(addr, val, opt_log) {
     if (addr < 0x2000) {
-      this.ram[addr & 0x7fff] = val;
+      this.ram[addr & 0x7ff] = val;
     } else {
       this.nes.mmap.write(addr, val);
     }

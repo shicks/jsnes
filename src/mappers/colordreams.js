@@ -8,11 +8,11 @@ import {NROM} from './nrom.js';
  * @constructor
  */
 export class ColorDreams extends NROM {
-  write8(address, value) {
+  write8000(value, address) {
     // Swap in the given PRG-ROM bank:
-    this.loadPrgPage(0x8000, value & 0xf, 0x8000);
+    this.swapPrg8k(0, (value & 0xf) << 2, 4);
 
     // Swap in the given VROM bank at 0x0000:
-    this.loadChrPage(0x0000, value >>> 4, 0x2000);
+    this.swapChr1k(0, (value >>> 4) << 3, 8);
   }
 }

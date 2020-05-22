@@ -16,82 +16,97 @@ export class MMC3 extends NROM {
     this.irqLatchValue = 0;                // Register $C000
     this.irqCounter = 0;
     this.irqEnable = true;                 // Register $E000, $E001
+    this.prgRom = null;
   }
 
-  initializePrgRom() {
-    this.loadPrgPage(0xe000, -1, 0x2000);
+  initializePrgRomBanks() {
+    super.initializePrgRomBanks();
     // All other initial pages are unspecified
+    this.swapPrg8k(0, 0);
+    this.swapPrg8k(1, 0);
+    this.swapPrg8k(2, 0xfe);
+    this.swapPrg8k(3, 0xff);
   }
 
-  write8(addr, value) {
-    addr &= 0xe001;
+  initializePrgRegisterMapping() {
+    this.fillPrgMirror([[0x8000, this.write8000],
+                        [0x8001, this.write8001],
+                        [0xa000, this.writeA000],
+                        [0xa001, this.writeA001],
+                        [0xc000, this.writeC000],
+                        [0xc001, this.writeC001],
+                        [0xe000, this.writeE000],
+                        [0xe001, this.writeE001]],
+                       0x2000, 2);
+  }
 
-    if (addr < 0xc000) {
-      if (addr < 0xa000) {
-        if (addr == 0x8000) {
-          // 8000: Address Select register
-          this.bankSelect = value;
-          this.updateBanks();
-        } else {
-          // 8001: Page number for command
-          this.banks[this.bankSelect & BANK_SELECT_ADDRESS_MASK] = value;
-          this.updateBanks();
-        }
-      } else {
-        if (addr == 0xa000) {
-          // A000: Mirroring select
-          if ((value & 1) !== 0) {
-            this.nes.ppu.setMirroring(this.nes.rom.HORIZONTAL_MIRRORING);
-          } else {
-            this.nes.ppu.setMirroring(this.nes.rom.VERTICAL_MIRRORING);
-          }
-        } else {
-          // A001: SaveRAM Toggle
-          // TODO
-          //nes.getRom().setSaveState((value&1)!=0);
-        }
-      }
+  
+
+  write8000(value) {
+    // 8000: Address Select register
+    this.bankSelect = value;
+    this.updateBanks();
+  }
+
+  write8001(value) {
+    // 8001: Page number for command
+    this.banks[this.bankSelect & BANK_SELECT_ADDRESS_MASK] = value;
+    this.updateBanks();
+  }
+
+  writeA000(value) {
+    // A000: Mirroring select
+    if ((value & 1) !== 0) {
+      this.nes.ppu.setMirroring(this.nes.rom.HORIZONTAL_MIRRORING);
     } else {
-      if (addr < 0xe000) {
-        if (addr == 0xc000) {
-          // C000: IRQ Latch
-          this.irqCounter = this.irqLatchValue = value;
-          //nes.ppu.mapperIrqCounter = 0;
-        } else {
-          // C001: IRQ Reload
-          this.irqCounter = this.irqLatchValue;
-        }
-      } else {
-        if (addr == 0xe000) {
-          // E000: IRQ Control Reg 0 (disable)
-          //irqCounter = irqLatchValue;
-          this.irqEnable = 0;
-        } else {
-          // E001: IRQ Control Reg 1 (enable)
-          this.irqEnable = 1;
-        }
-      }
+      this.nes.ppu.setMirroring(this.nes.rom.VERTICAL_MIRRORING);
     }
+  }
+
+  writeA001(value) {
+    // A001: SaveRAM Toggle
+    // TODO
+    //nes.getRom().setSaveState((value&1)!=0);
+  }
+
+  writeC000(value) {
+    // C000: IRQ Latch
+    this.irqCounter = this.irqLatchValue = value;
+    //nes.ppu.mapperIrqCounter = 0;
+  }
+
+  writeC001(value) {
+    // C001: IRQ Reload
+    this.irqCounter = this.irqLatchValue;
+  }
+
+  writeE000(value) {
+    // E000: IRQ Control Reg 0 (disable)
+    //irqCounter = irqLatchValue;
+    this.irqEnable = 0;
+  }
+
+  writeE001(value) {
+    // E001: IRQ Control Reg 1 (enable)
+    this.irqEnable = 1;
   }
 
   updateBanks() {
-    const chrInvert = this.bankSelect & BANK_SELECT_CHR_INVERTED ? 0x1000 : 0;
-    const prgInvert = this.bankSelect & BANK_SELECT_CHR_INVERTED ? 0x4000 : 0;
     if (!this.nes.ppu.usingChrRam) {
-      this.nes.ppu.triggerRendering();
-      this.chrRomSwitcher.swap(0x0000 ^ chrInvert, this.banks[0] >>> 1, 0x0800);
-      this.chrRomSwitcher.swap(0x0800 ^ chrInvert, this.banks[1] >>> 1, 0x0800);
-      this.chrRomSwitcher.swap(0x1000 ^ chrInvert, this.banks[2], 0x0400);
-      this.chrRomSwitcher.swap(0x1400 ^ chrInvert, this.banks[3], 0x0400);
-      this.chrRomSwitcher.swap(0x1800 ^ chrInvert, this.banks[4], 0x0400);
-      this.chrRomSwitcher.swap(0x1c00 ^ chrInvert, this.banks[5], 0x0400);
-      this.nes.ppu.patternTable = this.chrRomSwitcher.buffer();
+      const chrInvert = this.bankSelect & BANK_SELECT_CHR_INVERTED ? 4 : 0;
+      const ppu = this.nes.ppu;
+      ppu.triggerRendering();
+      this.swapChr1k(0 ^ chrInvert, this.banks[0], 2);
+      this.swapChr1k(2 ^ chrInvert, this.banks[1], 2);
+      this.swapChr1k(4 ^ chrInvert, this.banks[2]);
+      this.swapChr1k(5 ^ chrInvert, this.banks[3]);
+      this.swapChr1k(6 ^ chrInvert, this.banks[4]);
+      this.swapChr1k(7 ^ chrInvert, this.banks[5]);
     }
-    this.prgRomSwitcher.swap(0x0000 ^ prgInvert, this.banks[6], 0x2000);
-    this.prgRomSwitcher.swap(0x2000,             this.banks[7], 0x2000);
-    this.prgRomSwitcher.swap(0x4000 ^ prgInvert, -2,            0x2000);
-    this.prgRomSwitcher.swap(0x6000,             -1,            0x2000);
-    this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
+    const prgInvert = this.bankSelect & BANK_SELECT_PRG_INVERTED ? 0x4000 : 0;
+    this.swapPrg8k(0 ^ prgInvert, this.banks[6]);
+    this.swapPrg8k(1,             this.banks[7]);
+    this.swapPrg8k(2 ^ prgInvert, 0xfe);
   }
 
   clockIrqCounter() {

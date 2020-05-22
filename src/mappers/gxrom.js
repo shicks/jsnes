@@ -9,11 +9,11 @@ import {NROM} from './nrom.js';
  * @constructor
  */
 export class GxROM extends NROM {
-  write8(address, value) {
+  write8000(value, address) {
     // Swap in the given PRG-ROM bank at 0x8000:
-    this.loadPrgPage(0x8000, (value >> 4) & 3, 0x8000);
+    this.swapPrg8k(0, (value >> 2) & 0xc, 4);
 
     // Swap in the given VROM bank at 0x0000:
-    this.loadChrPage(0x0000, value & 3, 0x2000);
+    this.swapChr1k(0, (value & 3) << 3, 8);
   }
 }
