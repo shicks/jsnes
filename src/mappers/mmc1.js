@@ -19,7 +19,7 @@ export class MMC1 extends NROM {
   constructor(nes) {
     super(nes);
     // 5-bit buffer
-    this.shiftRegister = 0xf8;
+    this.shiftRegister = 0x1f;
     // $8000
     this.control = CTRL_MIRROR_ONE_LOWER | CTRL_PRG_16K_LO; // | CTRL_CHR_8K;
     // $A000
@@ -40,7 +40,7 @@ export class MMC1 extends NROM {
 
   reset() {
     super.reset();
-    this.shiftRegister = 0xf8;
+    this.shiftRegister = 0x1f;
     this.control = CTRL_MIRROR_ONE_LOWER | CTRL_PRG_16K_LO; // | CTRL_CHR_8K;
     this.chrLo = 0;
     this.chrHi = 0;
@@ -48,7 +48,7 @@ export class MMC1 extends NROM {
     this.update();
   }
 
-  initializePrgRom() {
+  initializeMapperState() {
     this.update();
   }
 
@@ -65,20 +65,24 @@ export class MMC1 extends NROM {
     // if it was too recent (cf. Bill and Ted)
     if (value & 0x80) {
       // High bit in written value resets and locks PRG mode to 3.
-      this.shiftRegister = 0xf8;
+      this.shiftRegister = 0x1f;
       this.control = this.control | CTRL_PRG_16K_LO;
       this.update();
       return false;
     }
-    this.shiftRegister <<= 1;
-    this.shiftRegister &= value & 1;
-    if (this.shiftRegister & 0x80) return false;
+    // New bits go in as 20.  Shifting in (e.g.) 1f would go like
+    //   1f (start) => 2f => 37 => 3b => 3d => 3e (missing 01) => 1f
+    this.shiftRegister >>>= 1;
+    this.shiftRegister |= (value & 1) << 5;
+    if (this.shiftRegister & 1) return false;
+    this.shiftRegister >>>= 1; //  shift out the last bit
     return true;
   }
 
   write8000(value) {
     if (!this.shift(value)) return;
     this.control = this.shiftRegister;
+    this.shiftRegister = 0x1f;
     this.update();
   }
 
@@ -86,18 +90,21 @@ export class MMC1 extends NROM {
     // This is the fifth write, so shiftRegister now contains the value
     if (!this.shift(value)) return;
     this.chrLo = this.shiftRegister;
+    this.shiftRegister = 0x1f;
     this.update();
   }
 
   writeC000(value) {
     if (!this.shift(value)) return;
     this.chrHi = this.shiftRegister;
+    this.shiftRegister = 0x1f;
     this.update();
   }
 
   writeE000(value) {
     if (!this.shift(value)) return;
     this.prgPage = this.shiftRegister;
+    this.shiftRegister = 0x1f;
     this.update();
   }
 
@@ -107,7 +114,7 @@ export class MMC1 extends NROM {
     if (ctrl & CTRL_PRG_16K) {
       if ((ctrl & CTRL_PRG_MASK) == CTRL_PRG_16K_LO) {
         this.swapPrg8k(0, this.prgPage << 1, 2);
-        this.swapPrg8k(2, 0xf, 2);
+        this.swapPrg8k(2, 0xe, 2);
       } else {
         this.swapPrg8k(0, 0, 2);
         this.swapPrg8k(2, this.prgPage << 1, 2);

@@ -2,7 +2,7 @@ import {NROM} from './nrom.js';
 
 // Mapper 2
 export class UxROM extends NROM {
-  initializePrgRom() {
+  initializeMapperState() {
     this.swapPrg8k(0, 0, 2);
     this.swapPrg8k(2, 0xfe, 2);
   }
