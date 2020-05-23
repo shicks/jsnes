@@ -121,6 +121,7 @@ CPU.prototype = {
   emulate: function() {
     var temp, temp2;
     var add;
+    var cycleCount = 0;
 
     // Check interrupts:
     if (this.irq) {
@@ -161,6 +162,7 @@ CPU.prototype = {
       }
 
       if (temp >= 0) {
+        cycleCount = 7;
         this.REG_PC = this.REG_PC_NEW;
         this.F_INTERRUPT = this.F_INTERRUPT_NEW;
         this.F_BRK = this.F_BRK_NEW;
@@ -170,7 +172,7 @@ CPU.prototype = {
 
     var opcode = this.load(this.REG_PC + 1);
     var opinf = opdata[opcode];
-    var cycleCount = opinf >> 24;
+    cycleCount += opinf >> 24;
     var cycleAdd = 0;
 
     // Find address mode:

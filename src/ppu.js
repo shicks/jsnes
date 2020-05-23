@@ -324,10 +324,6 @@ PPU.prototype = {
           this.checkSprite0(0);
         }
 
-        if (this.f_bgVisibility || this.f_spVisibility) {
-          // Clock mapper IRQ Counter:
-          this.nes.mmap.clockIrqCounter(this.scanline, this.curX);
-        }
         break;
 
       case 261:
@@ -364,11 +360,6 @@ PPU.prototype = {
                 this.hitSpr0 = true;
               }
             }
-          }
-
-          if (this.f_bgVisibility || this.f_spVisibility) {
-            // Clock mapper IRQ Counter:
-            //this.nes.mmap.clockIrqCounter(this.scanline, this.curX);
           }
         }
     }

@@ -135,10 +135,9 @@ export class MMC5 extends NROM {
       [[0x5120, 0x5121, 0x5122, 0x5123, 0x5124, 0x5125, 0x5126, 0x5127,
         0x5128, 0x5129, 0x512a, 0x512b], this.setChrBank],
       [[0x5130, // chr upper bank bits
-//        0x5203, // irq compare
+        0x5203, // irq compare
         0x5205, 0x5206, // multiplier
        ], this.storeReg5],
-      [[0x5203], this.setIrqCompare],
       // TODO - vertical split will require special PPU treatment
       [[0x5204], this.enableIrq],
       [[0x5209, 0x520a], this.setHardwareTimer],
@@ -339,11 +338,11 @@ export class MMC5 extends NROM {
     }
     const compare = this.reg5[0x203];
     if (scanline === 261) {
-      this.reg5[0x204] &= ~0x40;
+      this.reg5[0x204] &= ~0x40; // in-frame <- 0
     } else if (!(this.reg5[0x204] & 0x40)) {
-      this.reg5[0x204] |= 0x40;
+      this.reg5[0x204] |= 0x40; // in-frame <- 1
       this.irqCounter = 0;
-    } else if (/*++this.irqCounter /**/scanline-21/**/ === compare) {
+    } else if (++this.irqCounter === compare) {
       this.reg5[0x204] |= 0x80;
       if (this.irqEnabled) {
         this.nes.cpu.requestIrq(this.nes.cpu.IRQ_NORMAL);
@@ -352,13 +351,7 @@ export class MMC5 extends NROM {
   }
 
   enableIrq(value) {
-    if (this.irqEnabled = value & 0x80) {
-      this.irqCounter = 0;
-    }    
-  }
-
-  setIrqCompare(value) {
-    this.reg5[0x203] = value;
+    this.irqEnabled = value & 0x80;
   }
 
   readIrqStatus() {

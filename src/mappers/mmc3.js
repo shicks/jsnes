@@ -9,7 +9,7 @@ const BANK_SELECT_ADDRESS_MASK = 0x07;
 export class MMC3 extends NROM {
   constructor(nes) {
     super(nes);
-    this.irqPixel = 240;
+    this.irqPixel = 260;
 
     // State
     this.bankSelect = 0;                   // Register $8000
