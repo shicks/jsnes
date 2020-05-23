@@ -602,6 +602,7 @@ export class Debug {
     let stack = '';
     const result = this.visitLog({
       stack: (depth) => {
+        if (typeof NOINDENT === 'boolean' && NOINDENT) return;
         stack = ' '.repeat((depth & 0xff) >>> 0);
       },
       cpu: (op, addr, romaddr) => {

@@ -110,9 +110,9 @@ export class MMC3 extends NROM {
     this.swapPrg8k(2 ^ prgInvert, 0xfe);
   }
 
-  clockIrqCounter() {
+  clockIrqCounter(scanline, dot) {
     const ppu = this.nes.ppu;
-    if (!ppu.f_bgVisibility || !ppu.f_fgVisibility || ppu.scanline == 261) {
+    if ((!ppu.f_bgVisibility && !ppu.f_fgVisibility) || scanline == 261) {
       // no irq in these cases
       return;
     }

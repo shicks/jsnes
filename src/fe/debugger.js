@@ -349,8 +349,13 @@ export class PatternTableViewer extends Component {
     // TODO - not really a good way to get the index we actually want... :-/
   }
 
+  tileId(row, col) {
+    return row << 4 | col;
+  }
+
   hoverTile(table, row, col) {
-    const addr = table << 12 | row << 8 | col << 4;
+    const id = this.tileId(row, col);
+    const addr = table << 12 | id << 4;
     const index = (addr >> 4).toString(16).padStart(3, 0);
     const fullAddr = this.nes.mmap.mapChr(addr);
     const fullIndex = (fullAddr >> 4).toString(16).padStart(4, 0);
@@ -360,8 +365,9 @@ export class PatternTableViewer extends Component {
   }
 
   getTile(table, row, col, tileRow, colors) {
-    const addr = (table << 12) | (row << 8) | (col << 4) | tileRow;
-    this.getTileInternal(this.nes.ppu.patternTable[addr], colors);
+    const addr = table << 12 | this.tileId(row, col) << 4| tileRow;
+    this.getTileInternal(
+        this.nes.ppu.patternTableBanks[addr >> 10][addr & 0x3ff], colors);
   }
 
   getTileInternal(line, colors) {
@@ -431,6 +437,35 @@ export class PatternTableViewer extends Component {
 
     this.imageData.data.set(this.buf8);
     this.context.putImageData(this.imageData, 0, 0);
+  }
+}
+
+// This is for MMC5 w/ 8x16 sprite mode b/c it has a separate pattern tale
+export class SpritePatternTableViewer extends PatternTableViewer {
+  tileId(row, col) {
+    // row,col => id mapping for 8x16 sprites:
+    //  (0,0) => 0, (1,0) => 1, (0,1) => 2, (1,1) => 3, (1,f) => 31, (2,0) => 32
+    return (row & 0xe) << 4 | col << 1 | row & 1;
+  }
+
+  getTile(table, row, col, tileRow, colors) {
+    const addr = table << 12 | this.tileId(row, col) << 4| tileRow;
+    const banks =
+        this.nes.ppu.tallSpritePatternTableBanks ||
+        this.nes.ppu.patternTableBanks;
+    this.getTileInternal(banks[addr >> 10][addr & 0x3ff], colors);
+  }
+
+  hoverTile(table, row, col) {
+    const id = this.tileId(row, col);
+    const addr = table << 12 | id << 4;
+    const index = (id & ~1 | table & 1).toString(16).padStart(2, 0);
+    // const index = (addr >> 4).toString(16).padStart(2, 0);
+    const fullAddr = this.nes.mmap.mapChr(addr);
+    const fullIndex = (fullAddr >> 4).toString(16).padStart(4, 0);
+    const bank = (fullAddr >> 10).toString(16).padStart(2, 0);
+    this.info.textContent =
+        `Pattern $${fullIndex} (at $${index}), 1k bank $${bank}`;
   }
 }
 

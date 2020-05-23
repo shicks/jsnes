@@ -166,7 +166,7 @@ export class NES {
           // TODO - IRQ pixel for MMC3 depends on (a) whether we're
           // using 8x8 sprites (unpredictable with 8x16), and (b) whether
           // sprites are drawn out of table 0 or 1.
-          this.mmap.clockIrqCounter();
+          this.mmap.clockIrqCounter(scanline, curX);
         }
       }
     }

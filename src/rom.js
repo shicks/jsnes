@@ -58,8 +58,8 @@ export function ROM(nes) {
 
 ROM.prototype = {
   // Mirroring types:
-  VERTICAL_MIRRORING: 0x50,      // [0, 0, 1, 1]
-  HORIZONTAL_MIRRORING: 0x44,    // [0, 1, 0, 1]
+  VERTICAL_MIRRORING: 0x44,      // [0, 1, 0, 1]
+  HORIZONTAL_MIRRORING: 0x50,    // [0, 0, 1, 1]
   FOURSCREEN_MIRRORING: 0xe4,    // [0, 1, 2, 3]
   SINGLESCREEN_MIRRORING: 0x00,  // [0, 0, 0, 0]
   SINGLESCREEN_MIRRORING2: 0x55, // [1, 1, 1, 1]

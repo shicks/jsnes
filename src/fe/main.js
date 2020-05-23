@@ -254,6 +254,10 @@ class Main {
     return new debug.PatternTableViewer(this.nes);
   }
 
+  spritePatternTable() {
+    return new debug.SpritePatternTableViewer(this.nes);
+  }
+
   chrRom(...pages) {
     return new debug.ChrRomViewer(this.nes, pages);
   }
@@ -423,6 +427,8 @@ new Menu('Debug')
     .addItem('Watch PPU', () => new debug.WatchPpu(main.nes))
     .addItem('Nametable', () => new debug.NametableTextViewer(main.nes))
     .addItem('Pattern Table', () => new debug.PatternTableViewer(main.nes))
+    .addItem('Sprite Pattern Table',
+             () => new debug.SpritePatternTableViewer(main.nes))
     .addItem('CHR Viewer', () => promptForNumbers('Banks', banks => {
       new debug.ChrRomViewer(main.nes, banks);
     }))

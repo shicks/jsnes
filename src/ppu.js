@@ -326,7 +326,7 @@ PPU.prototype = {
 
         if (this.f_bgVisibility || this.f_spVisibility) {
           // Clock mapper IRQ Counter:
-          this.nes.mmap.clockIrqCounter();
+          this.nes.mmap.clockIrqCounter(this.scanline, this.curX);
         }
         break;
 
@@ -336,6 +336,7 @@ PPU.prototype = {
         this.status |= STATUS_VBLANK;
         this.nmiCounter = 9;
 
+        //this.nes.mmap.clockIrqCounter(this.scanline, this.curX);
         // Wrap around:
         this.scanline = -1; // will be incremented to 0
 
@@ -367,7 +368,7 @@ PPU.prototype = {
 
           if (this.f_bgVisibility || this.f_spVisibility) {
             // Clock mapper IRQ Counter:
-            this.nes.mmap.clockIrqCounter();
+            //this.nes.mmap.clockIrqCounter(this.scanline, this.curX);
           }
         }
     }
@@ -808,6 +809,7 @@ PPU.prototype = {
 
   renderBgScanline: function(bgbuffer, scan) {
     if (!this.renderThisFrame) return;
+    if (typeof HIDE_BG !== 'undefined' && HIDE_BG) return;
     const baseTile = this.f_bgPatternTable;
     var destIndex = (scan << 8) - this.regFH;
 
@@ -917,7 +919,7 @@ PPU.prototype = {
 
           } else {
             // 8x16 sprites
-            let top = tile;
+            let top = tile << 4;
             if (top & 0x10) top ^= 0x1010;
 
             this.renderSprite(
@@ -933,7 +935,7 @@ PPU.prototype = {
                 i,
                 top + (attr & SPRITE_VERT_FLIP ? 0 : 16),
                 Math.max(startscan - y - 9, 0),
-                Math.min(startscan + scancount - y - 8, 0),
+                Math.min(startscan + scancount - y - 8, 8),
                 x,
                 y + 9,
                 attr);

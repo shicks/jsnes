@@ -141,6 +141,7 @@ CPU.prototype = {
           // Normal IRQ:
           if (this.F_INTERRUPT !== 0) {
             // console.log("Interrupt was masked.");
+            temp = -1; // leave the request in place.
             break;
           }
           this.doIrq(temp);
@@ -159,10 +160,12 @@ CPU.prototype = {
         }
       }
 
-      this.REG_PC = this.REG_PC_NEW;
-      this.F_INTERRUPT = this.F_INTERRUPT_NEW;
-      this.F_BRK = this.F_BRK_NEW;
-      this.irq = 0;
+      if (temp >= 0) {
+        this.REG_PC = this.REG_PC_NEW;
+        this.F_INTERRUPT = this.F_INTERRUPT_NEW;
+        this.F_BRK = this.F_BRK_NEW;
+        this.irq = 0;
+      }
     }
 
     var opcode = this.load(this.REG_PC + 1);
