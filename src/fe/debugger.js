@@ -729,8 +729,7 @@ export class SnapshotPanel extends Component {
   constructor(main) {
     super();
     this.nes = nes;
-    this.base = main.romName || 'rom.nes';
-    this.base = this.base.replace(/\.nes$/, '');
+    this.main = main;
     this.fs = main.fs
     this.index = 0;
     this.element.classList.add('snapshot');
@@ -758,6 +757,11 @@ export class SnapshotPanel extends Component {
                      () => this.selectIndex((this.index + 1) % 10));
     
     this.selectIndex(0);
+  }
+
+  get base() {
+    const base = this.main.romName || 'rom.nes';
+    return base.replace(/\.nes$/, '');
   }
 
   async selectIndex(i) {
