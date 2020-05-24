@@ -42,7 +42,7 @@ class Field {
   }
 
   array(typedArrayCtor) {
-    this.decoder = (x) => new typedArrayCtor(x);
+    this.decoder = (x) => new typedArrayCtor(x.buffer);
     return this;
   }
 
@@ -161,7 +161,8 @@ export class Proto {
     while (!r.eof()) {
       const index = r.readVarint();
       const spec = this[SPEC].byNumber[index];
-      checkState(spec, `unknown field number: ${index} at byte ${r.pos}`);
+      checkState(spec, `unknown field number: ${index} at byte ${r.pos
+                        } of ${this.prototype[Symbol.toStringTag]}`);
       const type = index & 7;
       let value;
       if (type == 2) {

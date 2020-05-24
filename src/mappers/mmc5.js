@@ -517,7 +517,7 @@ export class MMC5 extends NROM {
 }
 
 const ExtSavestate = Proto.message('Mmc5', {
-  reg5: Proto.bytes(1).array(Uint8Array),
+  reg5: Proto.bytes(1).array(Uint16Array),
   enableSram: Proto.uint32(2),
   hardwareTimer: Proto.uint32(3),
   irqEnabled: Proto.uint32(4),

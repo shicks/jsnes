@@ -407,9 +407,9 @@ export class NROM {
 
   bankSources(reverse = false) {
     return new Map([
-      ['prgrom', this.nes.rom.rom.buffer],
-      ['prgram', this.prgRam.buffer]
-      ['chr', this.ppu.patternTableFull.buffer],
+      [1, this.nes.rom.rom.buffer], // prg-rom
+      [2, this.prgRam.buffer],      // prg-ram
+      [3, this.nes.ppu.patternTableFull.buffer], // chr
     ].map(a => reverse ? [a[1], a[0]] : a));
   }
 
@@ -442,22 +442,33 @@ export class NROM {
   restoreExtSavestate(ext) {}
 
   restoreSavestate(mmap) {
+//debugger;
     const buffers = this.bankSources();
-    function deserializeBanks(banks) {
+    const deserializeBanks = (banks) => {
       if (banks == null) return null;
       return banks.map(({buffer, offset, length}) => {
         // TODO - could be better
-        const ctor = buffer === 'chr' ? Uint16Array : Uint8Array;
         const b = buffers.get(buffer);
+        const ctor =
+            b === this.nes.ppu.patternTableFull.buffer ?
+                Uint16Array : Uint8Array;
         if (!b) throw new Error(`Missing buffer`);
         return new ctor(b, offset, length);
       });
+    };
+    function setBuffer(dest, src) {
+      if (dest.byteLength !== src.byteLength) {
+        throw new Error(`length mismatch: ${
+                         dest.byteLength}, ${src.byteLength}`);
+      }
+      new Uint8Array(dest.buffer, dest.byteOffset, dest.byteLength)
+          .set(new Uint8Array(src.buffer, src.byteOffset, src.byteLength));
     }
     this.joy1StrobeState = mmap.joy1StrobeState;
     this.joy2StrobeState = mmap.joy2StrobeState;
     this.joypadLastWrite = mmap.joypadLastWrite;
-    if (mmap.prgRam) this.prgRam.set(mmap.prgRam);
-    if (mmap.chrRam) this.chrRam.set(mmap.chrRam);
+    if (mmap.prgRam) setBuffer(this.prgRam, mmap.prgRam);
+    if (mmap.chrRam) setBuffer(this.chrRam, mmap.chrRam);
     if (mmap.prgBanks) this.prgBanks = deserializeBanks(mmap.prgBanks);
     if (mmap.chrBanks) {
       this.nes.ppu.patternTableBanks = deserializeBanks(mmap.chrBanks);

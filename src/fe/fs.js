@@ -115,8 +115,9 @@ export class FileSystem {
    * @param {string} intent
    * @return {!Promise<!File|undefined>}
    */
-  async pick(text = undefined) {
-    const files = await this.list();
+  async pick(text = undefined, ext = undefined) {
+    let files = await this.list();
+    if (ext) files = files.filter(f => f.name.endsWith('.' + ext));
     return new Promise((ok, fail) => {
       new Picker(this, ok, fail, files, text);
     }).then((file) => {
@@ -147,6 +148,15 @@ export class FileSystem {
         
     return this.db.transaction(
         [BLOBS], 'readonly', (blobs) => request(blobs.get(name)));
+  }
+
+  /**
+   * @param {string} name
+   * @return {!Promise<boolean>}
+   */
+  exists(name) {
+    return this.db.transaction(
+        [FILES], 'readonly', (files) => request(files.has(name)));
   }
 
   /**

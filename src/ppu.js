@@ -1217,17 +1217,20 @@ PPU.prototype = {
   },
 
   restoreSavestate(ppu) {
+    function restoreNametable(nt, content) {
+      if (!(nt instanceof Uint8Array)) return;
+      if (nt.byteOffset !== 0) return;
+      nt.fill(0);
+      if (content) nt.set(content);
+    }
+
     // Memory
     this.spriteRam.set(ppu.mem.spriteRam);
     this.paletteRam.set(ppu.mem.paletteRam);
-    this.nametable0.fill(0);
-    this.nametable1.fill(0);
-    this.nametable2.fill(0);
-    this.nametable3.fill(0);
-    if (ppu.mem.nametable0) this.nametable0.set(ppu.mem.nametable0);
-    if (ppu.mem.nametable1) this.nametable1.set(ppu.mem.nametable1);
-    if (ppu.mem.nametable2) this.nametable2.set(ppu.mem.nametable2);
-    if (ppu.mem.nametable3) this.nametable3.set(ppu.mem.nametable3);
+    restoreNametable(this.nametable0, ppu.mem.nametable0);
+    restoreNametable(this.nametable1, ppu.mem.nametable1);
+    restoreNametable(this.nametable2, ppu.mem.nametable2);
+    restoreNametable(this.nametable3, ppu.mem.nametable3);
     // Registers
     this.vramAddress = ppu.reg.v;
     this.vramTmpAddress = ppu.reg.t;

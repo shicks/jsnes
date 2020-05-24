@@ -2,6 +2,7 @@
 import {child, text, link, fmt} from './utils.js';
 import {Component} from './component.js';
 import {Controller} from '../controller.js';
+import {Savestate} from '../wire.js';
 
 // A single watched memory location or expression.
 export class Watch {
@@ -544,9 +545,9 @@ class MoviePanel extends Component {
     this.frame();
 
     this.registerKey('w', 'Seek', () => this.seekToKeyframe());
-    this.registerKey('{', 'Previous Keyframe',
+    this.registerKey('[', 'Previous Keyframe',
                      () => this.selectKeyframe(this.currentKeyframe - 1));
-    this.registerKey('}', 'Next Keyframe',
+    this.registerKey(']', 'Next Keyframe',
                      () => this.selectKeyframe(this.currentKeyframe + 1));
   }
 
@@ -719,6 +720,76 @@ export class RecordPanel extends MoviePanel {
   cancel() {
     this.movie.stop();
     // TODO - take a final snapshot so we can resume later?
+  }
+}
+
+// [q]: Save [w]: Restore
+// [<] # [>]   -- plus keyboard
+export class SnapshotPanel extends Component {
+  constructor(main) {
+    super();
+    this.nes = nes;
+    this.base = main.romName || 'rom.nes';
+    this.base = this.base.replace(/\.nes$/, '');
+    this.fs = main.fs
+    this.index = 0;
+    this.element.classList.add('snapshot');
+    const top = child(this.element, 'div');
+    link(top, '[save]', () => this.save(this.index));
+    text(top, ' ');
+    link(top, '[load]', () => this.load(this.index));
+
+    const middle = child(this.element, 'div');
+    text(middle, 'Slot: ');
+    link(middle, '<', () => this.selectIndex((this.index + 9) % 10));
+    text(middle, ' ');
+    this.indexSpan = child(middle, 'span');
+    text(middle, ' ');
+    link(middle, '>', () => this.selectIndex((this.index + 1) % 10));
+
+    this.thumbnail = child(this.element, 'img');
+    this.thumbnail.height = '120';
+
+    this.registerKey('q', 'Save', () => this.save());
+    this.registerKey('w', 'Load', () => this.load());
+    this.registerKey('[', 'Previous Slot',
+                     () => this.selectIndex((this.index + 9) % 10));
+    this.registerKey(']', 'Next Slot',
+                     () => this.selectIndex((this.index + 1) % 10));
+    
+    this.selectIndex(0);
+  }
+
+  async selectIndex(i) {
+    this.indexSpan.textContent = this.index = i;
+    const fn = this.base + '.st' + i;
+    const file = await this.fs.open(fn);
+    if (file) {
+      const state = Savestate.parse(file.data, 'NES-STA\x1a');
+      const screen = state && state.screen;
+      if (screen) {
+        const url =
+            'data:image/png;base64,' + btoa(String.fromCharCode(...screen));
+        this.thumbnail.src = url;
+        this.thumbnail.style.visibility = 'visible';
+        return;
+      }
+    }
+    this.thumbnail.style.visibility = 'hidden';
+  }
+
+  async save() {
+    const buffer = this.nes.writeSavestate();
+    const fn = this.base + '.st' + this.index;
+    await this.fs.save(fn, buffer);
+    this.selectIndex(this.index);
+  }
+
+  async load() {
+    const fn = this.base + '.st' + this.index;
+    const file = await this.fs.open(fn);
+    if (!file) return;
+    this.nes.restoreSavestate(file.data);
   }
 }
 
@@ -901,5 +972,169 @@ export class TimerPanel extends Component {
     } else if (this.started === 0) {
       this.element.textContent = '0.000';
     }
+  }
+}
+
+export class CoveragePanel extends Component {
+  constructor(nes) {
+    super();
+    this.nes = nes;
+    this.element.classList.add('coverage');
+    const top = child(this.element, 'div');
+    text(top, 'Type: ');
+    this.type = 'x';
+    this.typeSpan = child(top, 'span');
+    this.typeSpan.textContent = 'exec';
+    text(top, ' ');
+    link(top, '[x]', () => this.setType('x', 'exec'));
+    text(top, ' ');
+    link(top, '[r]', () => this.setType('r', 'read'));
+    text(top, ' ');
+    link(top, '[w]', () => this.setType('w', 'write'));
+    this.assertions = 0;
+
+    const mid = child(this.element, 'div');
+    text(mid, 'Results: ');
+    link(mid, '[reset]', () => this.reset());
+    this.results = child(this.element, 'div');
+
+    this.registerKey('c', 'Assert Covered', () => this.assertCovered());
+    this.registerKey('u', 'Assert Uncovered', () => this.assertUncovered());
+    this.update();
+  }
+
+  reset() {
+    this.assertions = 0;
+    this.nes.debug.coverage.clear();
+    this.update();
+  }
+
+  setType(type, text) {
+    this.type = type;
+    this.typeSpan.textContent = text;
+    this.update();
+  }
+
+  assertCovered() {
+    this.assertions |= 1;
+    this.nes.debug.coverage.expectCovered();
+    this.update();
+  }
+
+  assertUncovered() {
+    this.assertions |= 2;
+    this.nes.debug.coverage.expectUncovered();
+    this.update();
+  }
+
+  update() {
+    if (this.assertions !== 3) {
+      this.results.textContent = '  c: assert covered\n  u: assert uncovered';
+      return;
+    }
+    const results = this.nes.debug.coverage.candidates(this.type, true);
+    if (typeof results === 'string') {
+      this.results.textContent =
+          '  PRG ' + results.replace(/,\s*/g, '\n  PRG ');
+      return;
+    }
+    // it's an object - format the lines.
+    const lines = [];
+    for (const key in results) {
+      lines.push(`  ${key}: $${results[key].toString(16).padStart(2, '0')}`);
+    }
+    this.results.textContent = lines.join('\n');
+  }
+
+  async selectIndex(i) {
+    this.indexSpan.textContent = this.index = i;
+    const fn = this.base + '.st' + i;
+    const file = await this.fs.open(fn);
+    if (file) {
+      const state = Savestate.parse(file.data, 'NES-STA\x1a');
+      const screen = state && state.screen;
+      if (screen) {
+        const url =
+            'data:image/png;base64,' + btoa(String.fromCharCode(...screen));
+        this.thumbnail.src = url;
+        this.thumbnail.style.visibility = 'visible';
+        return;
+      }
+    }
+    this.thumbnail.style.visibility = 'hidden';
+  }
+
+  async save() {
+    const buffer = this.nes.writeSavestate();
+    const fn = this.base + '.st' + this.index;
+    await this.fs.save(fn, buffer);
+    this.selectIndex(this.index);
+  }
+
+  async load() {
+    const fn = this.base + '.st' + this.index;
+    const file = await this.fs.open(fn);
+    if (!file) return;
+    this.nes.restoreSavestate(file.data);
+  }
+}
+
+export class KeysPanel extends Component {
+  constructor() {
+    super();
+    this.element.classList.add('help');
+    const line = (text) => {
+      child(this.element, 'div').textContent = text;
+    }
+    line('General:');
+    line('  arrows - Dpad');
+    line('  z - B button');
+    line('  x - A button');
+    line('  ctrl - Select button');
+    line('  enter - Start button');
+    line('  p - Play/Pause');
+    line('  m - Toggle music');
+    line('  ` - Fast forward');
+    line('  ~ - Toggle fast forward');
+    line('Save states:');
+    line('  q - Save');
+    line('  w - Load');
+    line('  [ ] - Change slot');
+    line('Movie:');
+    line('  q - Set a keyframe (record only)');
+    line('  w - Seek to keyframe');
+    line('  [ ] - Change keyframe');
+    line('Timer:');
+    line('  1 - Start');
+    line('  2 - Pause/resume');
+    line('  3 - Stop/reset');
+    line('Trace:');
+    line('  f - Advance 1 frame');
+    line('  g - Advance 1 instruction');
+    line('  t - Advance 8 scanlines');
+    line('  o - Step out of routine');
+  }
+}
+
+export class WindowsPanel extends Component {
+  constructor() {
+    super();
+    this.element.classList.add('help');
+    const line = (text) => {
+      child(this.element, 'div').textContent = text;
+    }
+    line('General:');
+    line('  x - Close panel');
+    line('  \u25a1 - Move panel to front');
+    line('File selection:');
+    line('  ^ - Pick a file from disk');
+    line('  + - Type a filename');
+    line('  v - Download file to disk');
+    line('  x - Delete file');
+    line('Trace:');
+    line('  >> - Advance 128 instructions');
+    line('  > - Advance 1 instruction');
+    line('  ^ - Load more history');
+    line('  o - Clear the log');
   }
 }

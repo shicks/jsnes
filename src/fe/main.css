@@ -131,12 +131,27 @@
   font-weight: bold;
 }
 
+.coverage,
+.help,
+.snapshot,
 .watchpage,
 .movie,
 .controller {
   font-size: 83%;
   white-space: pre;
   font-family: monospace;
+}
+
+.coverage {
+  width: 200px;
+  height: 200px;
+  overflow: auto;
+  resize: both;
+}
+
+.help {
+  height: 200px;
+  overflow: auto;
 }
 
 .watchpage+.watchpage {
@@ -176,6 +191,7 @@
   width: 400px;
   height: 320px;
   overflow: auto;
+  resize: both;
 }
 
 .trace :first-child {

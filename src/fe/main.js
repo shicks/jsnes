@@ -155,7 +155,7 @@ class Main {
         return;
       }
     }
-    const file = await this.fs.pick('Select a ROM image');
+    const file = await this.fs.pick('Select a ROM image', 'nes');
     if (file) {
       this.handleLoaded(file.name, file.data);
       this.setHash('rom', file.name);
@@ -164,6 +164,16 @@ class Main {
 
   download() {
     FileSystem.download(this.rom, 'patched.nes');
+  }
+
+  async pickDownload() {
+    let file;
+    try {
+      file = await this.fs.pick('Select file to download');
+    } catch (err) {
+      return; // cancel is okay
+    }
+    if (file) FileSystem.download(file.data, file.name);
   }
 
   async handleLoaded(name, data) {
@@ -383,11 +393,15 @@ const promptForNumbers = (text, callback) => {
 new Menu('File')
     // TODO - file manager
     .addItem('Load ROM', () => main.load())
-    .addItem('Download ROM', () => main.download());
+    .addItem('Download ROM', () => main.download())
+    .addItem('Download File', () => main.pickDownload());
 new Menu('NES')
     // TODO - hard reset (need to figure out how)
     .addItem('Reset', () => main.nes.cpu.softReset())
-    .addItem('Clear gamepads', () => main.gamepadController.clearDefaults());
+    .addItem('Save States', () => new debug.SnapshotPanel(main))
+    .addItem('Virtual Controllers', () => new debug.ControllerPanel(main.nes))
+    .addItem('Clear Gamepads', () => main.gamepadController.clearDefaults())
+    .addItem('Timer', () => new debug.TimerPanel());
 new Menu('Movie')
     .addItem('Playback', async () => {
       
@@ -416,7 +430,7 @@ new Menu('Movie')
 new Menu('Debug')
     .addItem('Trace', () => new debug.Trace(main.nes, () => main.start()).step())
     .addItem('Source Map', async () => {
-      const {data} = await main.fs.pick('Select assembly source');
+      const {data} = await main.fs.pick('Select assembly source', 's');
       const decoder = new TextDecoder('utf-8');
       main.nes.debug.sourceMap = new SourceMap(decoder.decode(data));
     })
@@ -432,8 +446,10 @@ new Menu('Debug')
     .addItem('CHR Viewer', () => promptForNumbers('Banks', banks => {
       new debug.ChrRomViewer(main.nes, banks);
     }))
-    .addItem('Virtual Controllers', () => new debug.ControllerPanel(main.nes))
-    .addItem('Timer', () => new debug.TimerPanel());
+    .addItem('Coverage', () => new debug.CoveragePanel(main.nes));
+new Menu('Help')
+    .addItem('Keys', () => new debug.KeysPanel())
+    .addItem('Windows', () => new debug.WindowsPanel())
 
 // TODO - new speed debugging?
 //  - NOTE - movie came out okay, but there are a few glitches.
