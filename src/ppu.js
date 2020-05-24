@@ -349,7 +349,7 @@ PPU.prototype = {
             this.scanlineAlreadyRendered = false;
 
             // Check for sprite 0 (next scanline):
-            if (this.hitSpr0 && this.f_spVisibility) {
+            if (!this.hitSpr0 && this.f_spVisibility) {
               const y0 = this.spriteRam[0];
               const x0 = this.spriteRam[3];
               if (x0 >= -7 &&
@@ -988,7 +988,7 @@ PPU.prototype = {
       tileX &= ~0x20;
     }
     let bgTile =
-        this.f_spPatternTable |
+        this.f_bgPatternTable |
         this.nametables[cntH | cntV][((scanlineY & 0xf8) << 2) | tileX] << 4;
     let bgLine =
         this.patternTableBanks[bgTile >>> 10][bgTile & 0x3ff | scanlineY & 7];
@@ -1003,7 +1003,7 @@ PPU.prototype = {
         tileX &= ~0x20;
       }
       bgTile =
-          this.f_spPatternTable |
+          this.f_bgPatternTable |
           this.nametables[cntH | cntV][((scanlineY & 0xf8) << 2) | tileX] << 4;
       bgLine =
           this.patternTableBanks[bgTile >>> 10][bgTile & 0x3ff | scanlineY & 7];
