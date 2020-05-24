@@ -216,7 +216,7 @@ export class NROM {
     for (let i = 0; i < rom.length; i += 8192) {
       this.allPrgPages.push(rom.subarray(i, i + 8192));
     }
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i <= 3; i++) {
       this.prgBanks[i] = this.allPrgPages[this.allPrgPages.length - 4 + i];
     }
   }
