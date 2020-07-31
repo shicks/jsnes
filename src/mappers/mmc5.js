@@ -70,18 +70,18 @@ export class MMC5 extends NROM {
   initializePrgRam() {
     this.prgRam = new Uint8Array(0x2000);
     this.allPrgPages[0] = this.prgRam.subarray(0, 0x2000);
-    this.fillPrgMirror([[0x6000, this.bankedPrgWrite, 0],
-                        [0x8000, this.bankedPrgWrite, 1],
-                        [0xa000, this.bankedPrgWrite, 2],
-                        [0xc000, this.bankedPrgWrite, 3]],
+    this.fillPrgMirror([[0x6000, this.bankedPrgWrite, 4],
+                        [0x8000, this.bankedPrgWrite, 0],
+                        [0xa000, this.bankedPrgWrite, 1],
+                        [0xc000, this.bankedPrgWrite, 2]],
                        0x2000, 1, this.prgWrite);
   }
   initializePrgRomMapping() {
-    this.fillPrgMirror([[0x6000, this.bankedPrgRead, 0],
-                        [0x8000, this.bankedPrgRead, 1],
-                        [0xa000, this.bankedPrgRead, 2],
-                        [0xc000, this.bankedPrgRead, 3],
-                        [0xe000, this.bankedPrgRead, 4]],
+    this.fillPrgMirror([[0x6000, this.bankedPrgRead, 4],
+                        [0x8000, this.bankedPrgRead, 0],
+                        [0xa000, this.bankedPrgRead, 1],
+                        [0xc000, this.bankedPrgRead, 2],
+                        [0xe000, this.bankedPrgRead, 3]],
                        0x2000, 1, this.prgLoad);
     this.prgLoad[0xfffa] = this.prgLoad[0xfffb] = (addr) => {
       // NMI - clear in-frame, acknowledge IRQ, etc.
@@ -242,25 +242,25 @@ export class MMC5 extends NROM {
 
   updatePrgBanks() {
     const mode = this.reg5[0x100] & 3;
-    this.swapPrg8k(0, this.reg5[0x113] & 0x7f, 1);
+    this.swapPrg8k(4, this.reg5[0x113] & 0x7f, 1);
     switch (mode) {
     case 3: // 8k pages
-      this.swapPrg8k(1, this.reg5[0x114], 1);
-      this.swapPrg8k(2, this.reg5[0x115], 1);
-      this.swapPrg8k(3, this.reg5[0x116], 1);
-      this.swapPrg8k(4, this.reg5[0x117] | 0x80, 1); // always rom
+      this.swapPrg8k(0, this.reg5[0x114], 1);
+      this.swapPrg8k(1, this.reg5[0x115], 1);
+      this.swapPrg8k(2, this.reg5[0x116], 1);
+      this.swapPrg8k(3, this.reg5[0x117] | 0x80, 1); // always rom
       break;
     case 2: // 16k lower, 8k upper
-      this.swapPrg8k(1, this.reg5[0x115], 2);
-      this.swapPrg8k(3, this.reg5[0x116], 1);
-      this.swapPrg8k(4, this.reg5[0x117] | 0x80, 1);
+      this.swapPrg8k(0, this.reg5[0x115], 2);
+      this.swapPrg8k(2, this.reg5[0x116], 1);
+      this.swapPrg8k(3, this.reg5[0x117] | 0x80, 1);
       break;
     case 1: // 16k pages
-      this.swapPrg8k(1, this.reg5[0x115], 2);
-      this.swapPrg8k(3, this.reg5[0x117] | 0x80, 2);
+      this.swapPrg8k(0, this.reg5[0x115], 2);
+      this.swapPrg8k(2, this.reg5[0x117] | 0x80, 2);
       break;
     case 0: // 32k page
-      this.swapPrg8k(1, this.reg5[0x117] | 0x80, 4);
+      this.swapPrg8k(0, this.reg5[0x117] | 0x80, 4);
       break;
     default:
       throw new Error(`Impossible: ${mode}`);
@@ -390,14 +390,6 @@ export class MMC5 extends NROM {
     this.nes.cpu.prgRom = this.prgRomSwitcher.buffer();
   }
 
-  // Effectively makes repeated calls to loadPrgPage
-  loadPrgPages(...pages) {
-    for (const [address, bank, size] of pages) {
-      this.prgRomSwitcher.swap(address - 0x6000, bank, size);
-    }
-    this.prgRom = this.prgRomSwitcher.buffer();
-  }
-
   // initializePrgRom() {
   //   this.loadPrgPage(0x8000, 0xff, 0x2000);
   //   this.loadPrgPage(0xa000, 0xff, 0x2000);
@@ -484,11 +476,14 @@ export class MMC5 extends NROM {
   //   }
   // }
 
-  // Update this because 6000 is bank 0.
+  // Update this for the switchable PRG RAM at 6000 (bank 4).
   prgRomBank(addr) {
     // TODO - handle ram and exram better?
-    if (addr < 0x6000) return null;
-    return this.prgBanks[(addr - 0x6000) >>> 13].byteOffset >>> 13;
+    if (addr < 0x8000) {
+      if (addr < 0x6000) return null;
+      return this.prgBanks[4].byteOffset >>> 13;
+    }
+    return this.prgBanks[(addr & 0x7fff) >>> 13].byteOffset >>> 13;
   }
   prgRomAddress(bank, addr) {
     if (bank == null) bank = this.prgRomBank(addr);

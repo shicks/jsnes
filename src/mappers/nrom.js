@@ -488,6 +488,10 @@ export class NROM {
   clearCache() {
     this.restoreSavestate(this.writeSavestate());
   }
+
+  prgBankIndex(i) {
+    return this.prgBanks[i].byteOffset >>> 13;
+  }
 }
 
 function mask(powerOfTwo) {
