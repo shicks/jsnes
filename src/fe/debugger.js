@@ -1,5 +1,6 @@
 // Debugging tools
 import {child, text, link, fmt} from './utils.js';
+import {CodeDataLog} from '../cdl.js';
 import {Component} from './component.js';
 import {Controller} from '../controller.js';
 import {Savestate} from '../wire.js';
@@ -611,6 +612,62 @@ class MoviePanel extends Component {
     this.currentKeyframe = Math.max(0, Math.min(target, this.keyframes.length - 1));
     this.updateKeyframe();
     this.frame();
+  }
+}
+
+export class CodeDataLogger extends Component {
+  constructor(main) {
+    super();
+    this.main = main;
+    this.element.classList.add('cdl');
+    this.start = child(this.element, 'div');
+    if (typeof BigInt !== 'function' || typeof BigInt(0) !== 'bigint') {
+      text(this.start, 'Code-Data Log unsupported');
+      return;
+    }
+    link(this.start, '[import]', () => this.doImport());
+    text(this.start, ' ');
+    link(this.start, '[start]', () => this.doStart());
+
+    this.write = child(this.element, 'div');
+    link(this.write, '[write]', () => this.doWrite());
+    
+    if (this.main.nes.debug.cdl) {
+      this.start.style.display = 'none';
+    } else {
+      this.write.style.display = 'none';
+    }
+  }
+
+  async doImport() {
+    this.doStart();
+    const prgP = fs.open(this.base + '.prg.cdl');
+    const chrP = fs.open(this.base + '.chr.cdl');
+    const ramP = fs.open(this.base + '.ram.cdl');
+    const prg = await prgP;
+    const chr = await chrP;
+    const ram = await ramP;
+    if (prg) nes.debug.cdl.mergePrg(prg.data);
+    if (chr) nes.debug.cdl.mergeChr(chr.data);
+    if (ram) nes.debug.cdl.mergeRam(ram.data);
+  }
+
+  doStart() {
+    this.main.nes.debug.cdl = new CodeDataLog(this.main.nes);
+    this.start.style.display = 'none';
+    this.write.style.display = 'block';
+  }
+
+  doWrite() {
+    const cdl = this.main.nes.debug.cdl;
+    this.main.fs.save(this.base + '.prg.cdl', cdl.serializePrg());
+    this.main.fs.save(this.base + '.chr.cdl', cdl.serializeChr());
+    this.main.fs.save(this.base + '.ram.cdl', cdl.serializeRam());
+  }
+
+  get base() {
+    const base = this.main.romName || 'rom.nes';
+    return base.replace(/\.nes$/, '');
   }
 }
 

@@ -117,6 +117,7 @@ export class Debug {
     this.lastPc = 0;
     this.sourceMap = new SourceMap();
     this.sourceTracker = new Debug.SourceTracker(nes);
+    this.cdl = null;   // optional code/data logger
 
     this.debuggers = [
       this.sourceTracker,
@@ -216,6 +217,7 @@ export class Debug {
   }
 
   logCpu(opcode, pc) {
+    if (this.cdl) this.cdl.logExec(pc);
     // Check if we're waiting for an interrupt
     // TODO - break out of "waiting" if the pattern breaks
     if (this.holding.holding) return;
@@ -276,6 +278,12 @@ export class Debug {
   }
 
   logMem(op, address, value, write = -1) {
+    if (this.cdl) {
+      if (op & MEM_READ) this.cdl.logRead(address);
+      if (op & MEM_WORD) this.cdl.logRead(address + 1);
+      if (op & MEM_WRITE) this.cdl.logWrite(address,
+                                            write >= 0 ? write : value);
+    }
     if (this.holding.holding) return;
     const bank = op & MEM_READ ? this.nes.mmap.prgRomBank(address) : null;
     const addr = bank != null ? this.nes.mmap.prgRomAddress(bank, address) :

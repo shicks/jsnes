@@ -833,6 +833,7 @@ PPU.prototype = {
             tile = baseTile | this.nt[ntOffset] << 4;
             att = (attrByte >> attrShift & 3) << 2;
           }
+          if (this.nes.debug.cdl) this.nes.debug.cdl.logBackground(tile, att);
           const addr = tile | this.cntFV;
           let line = this.patternTableBanks[addr >>> 10][addr & 0x3ff];
 
@@ -1120,6 +1121,7 @@ PPU.prototype = {
     if (dx < -7 || dx >= 256 || dy < -7 || dy >= 240) {
       return;
     }
+    if (this.nes.debug.cdl) this.nes.debug.cdl.logSprite(tileAddress, attr);
 
     if (dx < 0) {
       srcx1 -= dx;

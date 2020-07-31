@@ -446,7 +446,8 @@ new Menu('Debug')
     .addItem('CHR Viewer', () => promptForNumbers('Banks', banks => {
       new debug.ChrRomViewer(main.nes, banks);
     }))
-    .addItem('Coverage', () => new debug.CoveragePanel(main.nes));
+    .addItem('Coverage', () => new debug.CoveragePanel(main.nes))
+    .addItem('Code-Data Logger', () => new debug.CodeDataLogger(main));
 new Menu('Help')
     .addItem('Keys', () => new debug.KeysPanel())
     .addItem('Windows', () => new debug.WindowsPanel())
