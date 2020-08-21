@@ -398,6 +398,10 @@ export class NROM {
     return a;
   }
 
+  isRom(addr) {
+    return addr >= 0x8000;
+  }
+
   // Maps the PPU memory address to CHR ROM, or returns null if not in CHR ROM.
   mapChr(addr) {
     if (addr >= 0x2000) return null;

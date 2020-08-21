@@ -4,6 +4,7 @@ export class GamepadController {
   constructor(main) {
     this.main = main;
     this.gamepads = [];
+    if (main.hash['gamepad'] == 0) return;
     window.addEventListener('gamepadconnected', async ({gamepad}) => {
       console.log("Gamepad connected at index %d: %s. %d buttons, %d axes.",
                   gamepad.index, gamepad.id,

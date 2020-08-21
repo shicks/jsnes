@@ -476,6 +476,13 @@ export class MMC5 extends NROM {
   //   }
   // }
 
+  isRom(addr) {
+    const bank = this.prgRomBank(addr);
+    if (bank == null) return false;
+    const prg = this.prgBanks[bank];
+    return prg.buffer !== this.prgRam.buffer;
+  }
+
   // Update this for the switchable PRG RAM at 6000 (bank 4).
   prgRomBank(addr) {
     // TODO - handle ram and exram better?

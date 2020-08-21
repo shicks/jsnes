@@ -657,16 +657,16 @@ PPU.prototype = {
   // Write 256 bytes of main memory
   // into Sprite RAM.
   sramDMA: function(value) {
-    var baseAddress = value * 0x100;
+    var baseAddress = value << 8;
     var data;
     for (var i = this.sramAddress; i < 256; i++) {
       // TODO(sdh): consider storing the actual CPU RAM on the cpu object
       // and then revert this to cpu.mem - but that's more complicated.
-      data = this.nes.cpu.load(baseAddress + i);
+      data = this.nes.cpu.load(baseAddress | i);
       // this.vram[0x1000 | i] = data;
       this.spriteRamWriteUpdate(i, data);
     }
-
+    if (this.nes.debug.cdl) this.nes.debug.cdl.logOamDma(value & 7);
     this.nes.cpu.haltCycles(513);
   },
 

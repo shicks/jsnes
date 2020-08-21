@@ -217,7 +217,7 @@ export class Debug {
   }
 
   logCpu(opcode, pc) {
-    if (this.cdl) this.cdl.logExec(pc);
+    if (this.cdl) this.cdl.logExec(opcode, pc);
     // Check if we're waiting for an interrupt
     // TODO - break out of "waiting" if the pattern breaks
     if (this.holding.holding) return;
@@ -277,17 +277,21 @@ export class Debug {
     // store the arguments, particularly if we're in RAM...
   }
 
+  logJmp() {
+    if (this.cdl) {
+      // TODO - Get the bank info...
+      this.cdl.logEntry(this.nes.cpu.REG_PC + 1);
+    }
+  }
+
   logMem(op, address, value, write = -1) {
     if (this.cdl) {
-      if (op & MEM_READ) this.cdl.logRead(address);
-      if (op & MEM_WORD) this.cdl.logRead(address + 1);
-      if (op & MEM_WRITE) this.cdl.logWrite(address,
-                                            write >= 0 ? write : value);
+      this.cdl.logMem(address, op & MEM_WORD, op & MEM_PPU, op & MEM_WRITE);
     }
     if (this.holding.holding) return;
     const bank = op & MEM_READ ? this.nes.mmap.prgRomBank(address) : null;
     const addr = bank != null ? this.nes.mmap.prgRomAddress(bank, address) :
-            address < 0x2000 ? address & 0x7ff : address;
+          address < 0x2000 ? address & 0x7ff : address;
     this.coverage.cov[addr] |= (bank != null ? BREAK_PRG_R :
                                 (op & MEM_READ ? BREAK_RAM_R : 0) |
                                 (op & MEM_WRITE ? BREAK_RAM_W : 0));

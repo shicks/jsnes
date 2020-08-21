@@ -289,3 +289,11 @@
   opacity: 60%;
   z-index: 1000;
 }
+
+.disassembly {
+  max-width: 900px;
+  max-height: 500px;
+  overflow: auto;
+  white-space: pre;
+  padding-right: 1em;
+}

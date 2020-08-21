@@ -192,6 +192,10 @@ export class FileSystem {
           request(blobs.delete(name));
         });
   }
+
+  download(data, name) {
+    download(data, name);
+  }
 }
 
 

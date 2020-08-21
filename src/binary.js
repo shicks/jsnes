@@ -214,6 +214,8 @@ export class BinaryWriter extends BinaryReader {
   }
 
   writeVarint(num) {
+    if (typeof num === 'boolean') num = Number(num);
+    if (!Number.isSafeInteger(num)) throw new Error(`not an int: ${num}`);
     do {
       let b = num % 128;
       num = Math.floor(num / 128);

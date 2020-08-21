@@ -187,6 +187,41 @@ export const Savestate = Proto.message('Savestate', {
 
 });
 
+export const CoverageLog = Proto.message('CoverageLog', {
+  records: Proto.bytes(1).repeated().message(() => CoverageLog.Record),
+
+  Record: Proto.message('CoverageLog.Record', {
+    // Full (24-bit) address for the record.
+    address: Proto.uint32(1),
+    // First covered frame.
+    first: Proto.uint32(2),
+    // Last covered frame.
+    last: Proto.uint32(3),
+    // Number of times this record was hit (4 * log2(count))
+    logCount: Proto.uint32(4),
+    // Bitset of metadata:
+    //     1 - entry.
+    //     2 - data read from rom.
+    //     4 - data embedded in code.
+    //     8 - data written to the nametable.
+    //    10 - data written to sprite memory.
+    //    20 - data written to character memory.
+    //    40 - data used as an index for an indirect read.
+    //    80 - data used as an indirect read address.
+    //   100 - data used as a jump address.
+    //   200 - data written to palette data.
+    meta: Proto.uint32(5),
+    // Referrers: for entries, this is the full address of the jump
+    // instruction that jumped there; for data, it's the full address
+    // of the instruction that did the read.
+    refs: Proto.uint32(6).repeated(),
+    // Registers this data is written to.
+    regs: Proto.uint32(7).repeated(),
+    // Full address of indirect ref (should only be one? really only need bank)
+    indirect: Proto.uint32(8),
+  }),
+});
+
 export const Movie = Proto.message('Movie', {
   chunks: Proto.bytes(1).repeated().message(() => Movie.Chunk),
   frames: Proto.uint32(2),
@@ -229,4 +264,4 @@ export const Movie = Proto.message('Movie', {
 // so only special behavior if recording.  otherwise snapshot just stores it in
 // a normal .sta file.
 
-window.wire = {Savestate, Movie};
+if (typeof window === 'object') window.wire = {Savestate, Movie};

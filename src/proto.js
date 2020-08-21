@@ -281,4 +281,4 @@ export class Proto {
   }
 }
 
-window.Proto = Proto;
+if (typeof window === 'object') window.Proto = Proto;

@@ -1,3 +1,4 @@
+import {CodeDataLog} from '../cdl.js';
 import {Controller} from '../controller.js';
 import {Debug, SourceMap} from '../debug.js';
 import {NES} from '../nes.js';
@@ -115,6 +116,21 @@ class Main {
           p.seekToKeyframe();
         });
       }
+    } else if (this.hash['record']) {
+      (async () => {
+        const file = this.hash['record'];
+        const data = await this.fs.open(file);
+        const movie = data && data.byteLength ?
+              Movie.parse(file.data, 'NES-MOV\x1a') : undefined;
+        this.nes.movie = new Recorder(main.nes, movie);
+        const panel = new debug.RecordPanel(this, file);
+        if (movie) {
+          panel.selectKeyframe(Infinity);
+          panel.seekToKeyframe();
+        } else {
+          panel.start();
+        }
+      })();
     }
     if (this.hash['breakAt']) {
       const b = this.hash['breakAt'].split(':');
@@ -207,6 +223,13 @@ class Main {
         const t = this.init.default;
         if (typeof t === 'function') t(this.nes);
       }
+    }
+
+    if (this.hash['cdl']) {
+      new debug.CodeDataLogger(this, this.hash['cdl']);
+      // this.nes.debug.cdl = new CodeDataLog(this.nes);
+      // const data = await this.fs.open(this.hash['cdl']);
+      // if (data && data.length) this.nes.debug.cdl.merge(data);
     }
 
     if (!this.hash['noautostart']) this.start();
@@ -415,6 +438,7 @@ new Menu('Movie')
     })
     .addItem('Record', async () => {
       const file = await main.fs.pick('Select movie to record');
+      main.setHash('record', file.name);
       const movie = file.data && file.data.byteLength ?
           Movie.parse(file.data, 'NES-MOV\x1a') : undefined;
       if (!(main.nes.movie instanceof Recorder) || movie) {
@@ -447,7 +471,19 @@ new Menu('Debug')
       new debug.ChrRomViewer(main.nes, banks);
     }))
     .addItem('Coverage', () => new debug.CoveragePanel(main.nes))
-    .addItem('Code-Data Logger', () => new debug.CodeDataLogger(main));
+    .addItem('Code-Data Logger', async () => {
+      if (main.hash['cdl']) {
+        new debug.CodeDataLogger(main, main.hash['cdl']);
+        return;
+      }
+      const file = await main.fs.pick('Select log file');
+      if (!main.nes.debug.cdl) main.nes.debug.cdl = new CodeDataLog(main.nes);
+      if (file.data && file.data.byteLength) {
+        main.nes.debug.cdl.merge(file.data);
+      }
+      main.setHash('cdl', file.name);
+      new debug.CodeDataLogger(main, file.name);
+    });
 new Menu('Help')
     .addItem('Keys', () => new debug.KeysPanel())
     .addItem('Windows', () => new debug.WindowsPanel())

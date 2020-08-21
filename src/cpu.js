@@ -249,6 +249,7 @@ CPU.prototype = {
         if ((addr & 0xff00) !== ((addr + this.REG_X) & 0xff00)) {
           cycleAdd = 1;
         }
+        if (this.nes.debug && this.nes.debug.cdl) this.nes.debug.cdl.logIndex('x');
         addr += this.REG_X;
         logmem = true;
         break;
@@ -260,6 +261,7 @@ CPU.prototype = {
         if ((addr & 0xff00) !== ((addr + this.REG_Y) & 0xff00)) {
           cycleAdd = 1;
         }
+        if (this.nes.debug && this.nes.debug.cdl) this.nes.debug.cdl.logIndex('y');
         addr += this.REG_Y;
         logmem = true;
         break;
@@ -270,11 +272,13 @@ CPU.prototype = {
         // the current X register. The value is the contents of that
         // address.
         addr = this.load(opaddr + 2);
-        if ((addr & 0xff00) !== ((addr + this.REG_X) & 0xff00)) {
-          cycleAdd = 1;
-        }
+        // NOTE(sdh): this mode does not actually have variable cycles.
+        // if ((addr & 0xff00) !== ((addr + this.REG_X) & 0xff00)) {
+        //   cycleAdd = 1;
+        // }
         addr += this.REG_X;
         addr &= 0xff;
+        if (this.nes.debug && this.nes.debug.cdl) this.nes.debug.cdl.logIndirect(addr, 'x');
         addr = this.load16bit(addr, true);
         logmem = true;
         break;
@@ -285,7 +289,9 @@ CPU.prototype = {
         // (and the one following). Add to that address the contents
         // of the Y register. Fetch the value
         // stored at that adress.
-        addr = this.load16bit(this.load(opaddr + 2), true);
+        const first = this.load(opaddr + 2);
+        if (this.nes.debug && this.nes.debug.cdl) this.nes.debug.cdl.logIndirect(first, 'y');
+        addr = this.load16bit(first, true);
         if ((addr & 0xff00) !== ((addr + this.REG_Y) & 0xff00)) {
           cycleAdd = 1;
         }
@@ -297,6 +303,7 @@ CPU.prototype = {
         // Indirect Absolute mode. Find the 16-bit address contained
         // at the given location.
         const a = this.load16bit(opaddr + 2); // Find op
+        //if (this.nes.debug && this.nes.debug.cdl) this.nes.debug.cdl.logIndirectJump(a);
         // Read from address given in op
         addr = this.load(a) + (this.load((a & 0xff00) | (((a & 0xff) + 1) & 0xff)) << 8);
         if (this.nes.debug) this.nes.debug.logMem(Debug.MEM_RD16, a, addr);
@@ -383,6 +390,7 @@ CPU.prototype = {
         if (!this.F_CARRY) {
           cycleCount += (opaddr & 0xff00) !== (addr & 0xff00) ? 2 : 1;
           this.REG_PC = addr;
+          if (this.nes.debug) this.nes.debug.logJmp();
         }
         break;
       }
@@ -395,6 +403,7 @@ CPU.prototype = {
         if (this.F_CARRY) {
           cycleCount += (opaddr & 0xff00) !== (addr & 0xff00) ? 2 : 1;
           this.REG_PC = addr;
+          if (this.nes.debug) this.nes.debug.logJmp();
         }
         break;
       }
@@ -407,6 +416,7 @@ CPU.prototype = {
         if (!this.F_NONZERO) {
           cycleCount += (opaddr & 0xff00) !== (addr & 0xff00) ? 2 : 1;
           this.REG_PC = addr;
+          if (this.nes.debug) this.nes.debug.logJmp();
         }
         break;
       }
@@ -432,6 +442,7 @@ CPU.prototype = {
         if (this.F_SIGN) {
           cycleCount++;
           this.REG_PC = addr;
+          if (this.nes.debug) this.nes.debug.logJmp();
         }
         break;
       }
@@ -444,6 +455,7 @@ CPU.prototype = {
         if (this.F_NONZERO) {
           cycleCount += (opaddr & 0xff00) !== (addr & 0xff00) ? 2 : 1;
           this.REG_PC = addr;
+          if (this.nes.debug) this.nes.debug.logJmp();
         }
         break;
       }
@@ -456,6 +468,7 @@ CPU.prototype = {
         if (this.F_SIGN === 0) {
           cycleCount += (opaddr & 0xff00) !== (addr & 0xff00) ? 2 : 1;
           this.REG_PC = addr;
+          if (this.nes.debug) this.nes.debug.logJmp();
         }
         break;
       }
@@ -495,6 +508,7 @@ CPU.prototype = {
         if (this.F_OVERFLOW === 0) {
           cycleCount += (opaddr & 0xff00) !== (addr & 0xff00) ? 2 : 1;
           this.REG_PC = addr;
+          if (this.nes.debug) this.nes.debug.logJmp();
         }
         break;
       }
@@ -507,6 +521,7 @@ CPU.prototype = {
         if (this.F_OVERFLOW === 1) {
           cycleCount += (opaddr & 0xff00) !== (addr & 0xff00) ? 2 : 1;
           this.REG_PC = addr;
+          if (this.nes.debug) this.nes.debug.logJmp();
         }
         break;
       }
@@ -675,6 +690,7 @@ CPU.prototype = {
 
         // Jump to new location:
         this.REG_PC = addr - 1;
+        if (this.nes.debug) this.nes.debug.logJmp();
         break;
       }
       case 28: {
@@ -687,6 +703,7 @@ CPU.prototype = {
         this.push((this.REG_PC >> 8) & 255);
         this.push(this.REG_PC & 255);
         this.REG_PC = addr - 1;
+        if (this.nes.debug) this.nes.debug.logJmp();
         break;
       }
       case 29: {
