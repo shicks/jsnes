@@ -33,21 +33,25 @@ export class GamepadController {
     const gs = navigator.getGamepads(); // seems necessary to actually update?
     // TODO - if unconfigured pressed, then go thru configure flow
     const log = [];
-    for (const {index, mapping} of this.gamepads) {
+    for (let i = 0; i < this.gamepads.length; i++) {
+      const {index, mapping} = this.gamepads[i];
       const g = gs[index];
       for (const b in mapping) {
-        log.push(`${index}.${b}: ${this.state[index][b]} -> ${g.buttons[b].pressed}`);
-        if (g.buttons[b].pressed != this.state[index][b]) {
-          if (this.state[index][b] = g.buttons[b].pressed) {
-            log.push(` => button down: ${index % 2 + 1}, ${mapping[b]}`);
-            this.main.nes.buttonDown(index % 2 + 1, mapping[b]);
+        // if (!this.state[i]) this.state[i]
+        // if (!this.state[i][b]) this.state[i][b] = null;
+        log.push(`${i}.${b}: ${this.state[i][b]} -> ${g.buttons[b].pressed}`);
+        if (g.buttons[b].pressed != this.state[i][b]) {
+          if (this.state[i][b] = g.buttons[b].pressed) {
+            log.push(` => button down: ${i % 2 + 1}, ${mapping[b]}`);
+            this.main.nes.buttonDown(i % 2 + 1, mapping[b]);
           } else {
-            log.push(` => button up: ${index % 2 + 1}, ${mapping[b]}`);
-            this.main.nes.buttonUp(index % 2 + 1, mapping[b]);
+            log.push(` => button up: ${i % 2 + 1}, ${mapping[b]}`);
+            this.main.nes.buttonUp(i % 2 + 1, mapping[b]);
           }
         }
       }
     }
+    console.log(log.join('\n'));
   }
 
   clearDefaults() {
@@ -119,6 +123,8 @@ async function readMapping(index) {
   const modal = appendDiv('gamepad-modal');
   const overlay = appendDiv('gamepad-modal-overlay');
   overlay.addEventListener('click', () => controller.abort());
+  modal.textContent = `Press a button to begin configuring gamepad`;
+  await Promise.race([signalPromise, getNextButton(index, signal)]);
   for (const [button, name] of BUTTON_NAMES) {
     modal.textContent = `Press the ${name} button`;
     const physical =
